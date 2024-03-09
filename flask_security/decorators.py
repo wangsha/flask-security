@@ -422,8 +422,9 @@ def auth_required(
                     # in a session cookie...
                     if not check_and_update_authn_fresh(within, grace, method):
                         return _security._reauthn_handler(within, grace)
-                    if eresponse := handle_csrf(method, _security._want_json(request)):
-                        return eresponse
+                    # flask_wtf already check csrf
+                    # if eresponse := handle_csrf(method, _security._want_json(request)):
+                        # return eresponse
                     set_request_attr("fs_authn_via", method)
                     return current_app.ensure_sync(fn)(*args, **kwargs)
             return _security._unauthn_handler(ams, headers=h)
