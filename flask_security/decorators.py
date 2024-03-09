@@ -172,8 +172,8 @@ def _check_session():
     """
     if not is_user_authenticated(current_user):
         return False
-    if get_request_attr("fs_authn_via") != "session":
-        return False
+    #if get_request_attr("fs_authn_via") != "session":
+    #    return False
     return True
 
 
