@@ -12,6 +12,7 @@
 
 # flake8: noqa: F401
 from .changeable import admin_change_password
+from .change_email import ChangeEmailForm
 from .core import (
     Security,
     RoleMixin,
@@ -21,6 +22,7 @@ from .core import (
     current_user,
 )
 from .datastore import (
+    FSQLALiteUserDatastore,
     UserDatastore,
     SQLAlchemyUserDatastore,
     AsaList,
@@ -58,7 +60,7 @@ from .forms import (
     VerifyForm,
     unique_identity_attribute,
 )
-from .mail_util import MailUtil
+from .mail_util import MailUtil, EmailValidateException
 from .oauth_glue import OAuthGlue
 from .oauth_provider import FsOAuthProvider
 from .password_util import PasswordUtil
@@ -69,6 +71,8 @@ from .recovery_codes import (
     MfRecoveryCodesForm,
 )
 from .signals import (
+    change_email_confirmed,
+    change_email_instructions_sent,
     confirm_instructions_sent,
     login_instructions_sent,
     password_changed,
@@ -105,7 +109,6 @@ from .utils import (
     check_and_get_token_status,
     get_hmac,
     get_request_attr,
-    get_token_status,
     get_url,
     hash_password,
     check_and_update_authn_fresh,
@@ -136,4 +139,4 @@ from .webauthn import (
 )
 from .webauthn_util import WebauthnUtil
 
-__version__ = "5.4.2"
+__version__ = "5.5.2"

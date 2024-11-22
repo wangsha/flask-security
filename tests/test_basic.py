@@ -24,11 +24,11 @@ from freezegun import freeze_time
 from tests.test_utils import (
     authenticate,
     capture_flashes,
+    capture_queries,
     check_location,
     get_auth_token_version_3x,
     get_form_action,
     get_form_input,
-    get_num_queries,
     hash_password,
     init_app_with_options,
     is_authenticated,
@@ -152,15 +152,19 @@ def test_authenticate_with_subdomain_next(app, client, get_message):
     data = dict(email="matt@lp.com", password="password")
     response = client.post("/login?next=http://sub.lp.com", data=data)
     assert response.status_code == 302
+    assert response.location == "http://sub.lp.com"
 
 
+@pytest.mark.settings(subdomain="auth")
 def test_authenticate_with_root_domain_next(app, client, get_message):
+    # As of Flask 3.1 this must be explicitly set.
+    app.subdomain_matching = True
     app.config["SERVER_NAME"] = "lp.com"
-    app.config["SECURITY_SUBDOMAIN"] = "auth"
     app.config["SECURITY_REDIRECT_ALLOW_SUBDOMAINS"] = True
     data = dict(email="matt@lp.com", password="password")
-    response = client.post("/login?next=http://lp.com", data=data)
+    response = client.post("http://auth.lp.com/login?next=http://lp.com", data=data)
     assert response.status_code == 302
+    assert response.location == "http://lp.com"
 
 
 def test_authenticate_with_invalid_subdomain_next(app, client, get_message):
@@ -176,6 +180,44 @@ def test_authenticate_with_subdomain_next_default_config(app, client, get_messag
     data = dict(email="matt@lp.com", password="password")
     response = client.post("/login?next=http://sub.lp.com", data=data)
     assert get_message("INVALID_REDIRECT") in response.data
+
+
+@pytest.mark.settings(
+    redirect_base_domain="bigidea.org", redirect_allowed_subdomains=["my.photo", "blog"]
+)
+def test_allow_subdomains(app, client, get_message):
+    app.config["SERVER_NAME"] = "app.bigidea.org"
+    data = dict(email="matt@lp.com", password="password")
+    # not in subdomain allowed list
+    response = client.post("/login?next=http://blog2.bigidea.org", data=data)
+    assert get_message("INVALID_REDIRECT") in response.data
+
+    response = client.post("/login?next=http://my.photo.bigidea.org/image", data=data)
+    assert response.location == "http://my.photo.bigidea.org/image"
+
+
+@pytest.mark.settings(
+    redirect_base_domain="bigidea.org", redirect_allowed_subdomains=[]
+)
+def test_redirect_allow_subdomains(app, client, get_message):
+    app.config["SERVER_NAME"] = "bigidea.org"
+    data = dict(email="matt@lp.com", password="password")
+    response = client.post("/login?next=http://blog2.bigidea.org", data=data)
+    assert get_message("INVALID_REDIRECT") in response.data
+    response = client.post("/login?next=http://bigidea.org/imin", data=data)
+    assert response.location == "http://bigidea.org/imin"
+
+
+@pytest.mark.settings(
+    post_login_view="http://blog.bigidea.org/post_login",
+    redirect_base_domain="bigidea.org",
+    redirect_allowed_subdomains=["my.photo", "blog"],
+)
+def test_view_redirect(app, client, get_message):
+    app.config["SERVER_NAME"] = "bigidea.org"
+    data = dict(email="matt@lp.com", password="password")
+    response = client.post("/login", data=data)
+    assert response.location == "http://blog.bigidea.org/post_login"
 
 
 def test_authenticate_case_insensitive_email(app, client):
@@ -198,6 +240,16 @@ def test_get_already_authenticated(client):
     assert b"Welcome matt@lp.com" in response.data
     response = client.get("/login", follow_redirects=True)
     assert b"Post Login" in response.data
+
+    # should still get extra goodies
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    response = client.get("/login", headers=headers)
+    assert response.status_code == 200
+
+    jresponse = response.json["response"]
+    assert all(a in jresponse for a in ["identity_attributes"])
+    assert "authentication_token" not in jresponse["user"]
+    assert all(a in jresponse["user"] for a in ["email", "last_update"])
 
 
 @pytest.mark.settings(post_login_view="/post_login")
@@ -1070,6 +1122,7 @@ def test_verifying_token_from_version_4x(app, client):
 
 def test_change_token_uniquifier(app):
     pytest.importorskip("sqlalchemy")
+    pytest.importorskip("flask_sqlalchemy")
 
     # make sure that existing token no longer works once we change the token uniquifier
     from sqlalchemy import Column, String
@@ -1123,6 +1176,7 @@ def test_change_token_uniquifier(app):
 
 def test_null_token_uniquifier(app):
     pytest.importorskip("sqlalchemy")
+    pytest.importorskip("flask_sqlalchemy")
 
     # If existing record has a null fs_token_uniquifier, should be set on first use.
     from sqlalchemy import Column, String
@@ -1170,18 +1224,16 @@ def test_null_token_uniquifier(app):
 def test_token_query(app, client_nc):
     # Verify that when authenticating with auth token (and not session)
     # that there is just one DB query to get user.
-    with app.app_context():
+    with capture_queries(app.security.datastore) as queries:
         response = json_authenticate(client_nc)
+        assert len(queries) == 1
         token = response.json["response"]["user"]["authentication_token"]
-        assert get_num_queries(app.security.datastore) == 1
-
-    with app.app_context():
         response = client_nc.get(
             "/token",
             headers={"Content-Type": "application/json", "Authentication-Token": token},
         )
         assert response.status_code == 200
-        assert get_num_queries(app.security.datastore) == 1
+    assert len(queries) == 2
 
 
 def test_session_query(in_app_context):
@@ -1196,15 +1248,13 @@ def test_session_query(in_app_context):
 
     response = json_authenticate(myclient)
     token = response.json["response"]["user"]["authentication_token"]
-    current_nqueries = get_num_queries(myapp.security.datastore)
-
-    response = myclient.get(
-        "/token",
-        headers={"Content-Type": "application/json", "Authentication-Token": token},
-    )
-    assert response.status_code == 200
-    end_nqueries = get_num_queries(myapp.security.datastore)
-    assert current_nqueries is None or end_nqueries == (current_nqueries + 2)
+    with capture_queries(myapp.security.datastore) as queries:
+        response = myclient.get(
+            "/token",
+            headers={"Content-Type": "application/json", "Authentication-Token": token},
+        )
+        assert response.status_code == 200
+    assert len(queries) == 2
 
 
 @pytest.mark.changeable()

@@ -22,7 +22,7 @@ SQLAlchemy Install requirements
 
      $ python3 -m venv pymyenv
      $ . pymyenv/bin/activate
-     $ pip install flask-security-too[common,mfa,fsqla]
+     $ pip install flask-security[common,mfa,fsqla]
 
 
 Two-factor Application
@@ -45,8 +45,7 @@ possible using SQLAlchemy:
     app.config['DEBUG'] = True
     # Generate a nice key using secrets.token_urlsafe()
     app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY", 'pf9Wkove4IKEAXvy-cQkeDPhv9Cb3Ag-wyJILbq_dFw')
-    # Bcrypt is set as default SECURITY_PASSWORD_HASH, which requires a salt
-    # Generate a good salt using: secrets.SystemRandom().getrandbits(128)
+    # Generate a good salt for password hashing using: secrets.SystemRandom().getrandbits(128)
     app.config['SECURITY_PASSWORD_SALT'] = os.environ.get("SECURITY_PASSWORD_SALT", '146585145368132386173505678016728509634')
 
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite://'
@@ -98,7 +97,7 @@ possible using SQLAlchemy:
 
     # Setup Flask-Security
     user_datastore = SQLAlchemyUserDatastore(db, User, Role)
-    app.security = Security(app, user_datastore)
+    security = Security(app, user_datastore)
 
     mail = Mail(app)
 
@@ -112,8 +111,8 @@ possible using SQLAlchemy:
     with app.app_context():
         # Create a user to test with
         db.create_all()
-        if not app.security.datastore.find_user(email='test@me.com'):
-            app.security.datastore.create_user(email='test@me.com', password='password')
+        if not security.datastore.find_user(email='test@me.com'):
+            security.datastore.create_user(email='test@me.com', password='password')
         db.session.commit()
 
     if __name__ == '__main__':
@@ -148,8 +147,10 @@ Theory of Operation
 +++++++++++++++++++++
 
 .. note::
-    The Two-factor feature requires that session cookies be received and sent as part of the API.
+    Confirming a code as part of user authentication requires that session cookies be received and sent as part of the API.
     This is true regardless of whether the application uses forms or JSON.
+    The ``/tf-setup`` endpoint requires freshness information which (as of 5.5.0) is available from the authentication token
+    (as well as the session) - so changing a user's 2FA method can be done without cookies.
 
 The Two-factor (2FA) API has four paths:
 
@@ -173,11 +174,11 @@ Changing 2FA Setup
 An authenticated user can change their 2FA configuration (primary_method, phone number, etc.). In order to prevent a user from being
 locked out, the new configuration must be validated before it is stored permanently. The user starts with a GET on ``/tf-setup``. This will return
 a list of configured 2FA methods the user can choose from, and the existing configuration. This must be followed with a POST on ``/tf-setup`` with the new primary
-method (and phone number if SMS). In the case of SMS, a code will be sent to the phone/device and again use ``/tf-validate`` to confirm code.
+method (and phone number if SMS). In the case of SMS or email, a code will be sent. In addition, a state_token will be returned in the response to
+the POST - this should be used to POST the code to ``/tf-setup/<state_token>``.
 In the case of setting up an authenticator app, the response to the POST will contain the QRcode image as well
 as the required information for manual entry.
-Once the code  has been successfully
-entered, the new configuration will be permanently stored.
+Once the code has been successfully entered, the new configuration will be permanently stored.
 
 Initial login/registration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -19,6 +19,7 @@ import typing as t
 
 import pytest
 
+from itsdangerous import BadTimeSignature
 from wtforms.validators import DataRequired, Length
 
 from tests.test_utils import (
@@ -67,6 +68,7 @@ from flask_security.utils import (
     uia_phone_mapper,
     verify_hash,
 )
+from flask_security.core import _get_serializer
 
 if t.TYPE_CHECKING:  # pragma: no cover
     from flask.testing import FlaskClient
@@ -292,11 +294,11 @@ def test_change_hash_type(app, sqlalchemy_datastore):
         **{
             "SECURITY_PASSWORD_HASH": "plaintext",
             "SECURITY_PASSWORD_SALT": None,
-            "SECURITY_PASSWORD_SCHEMES": ["bcrypt", "plaintext"],
+            "SECURITY_PASSWORD_SCHEMES": ["argon2", "plaintext"],
         },
     )
 
-    app.config["SECURITY_PASSWORD_HASH"] = "bcrypt"
+    app.config["SECURITY_PASSWORD_HASH"] = "argon2"
     app.config["SECURITY_PASSWORD_SALT"] = "salty"
 
     app.security = Security(
@@ -1079,6 +1081,24 @@ def test_authn_freshness_grace(app, client, get_message):
 
 
 def test_authn_freshness_nc(app, client_nc, get_message):
+    # By default, auth token carries the fs_paa time.
+    @auth_required(within=30)
+    def myview():
+        return Response(status=200)
+
+    app.add_url_rule("/myview", view_func=myview, methods=["GET"])
+
+    response = json_authenticate(client_nc)
+    token = response.json["response"]["user"]["authentication_token"]
+    h = {"Authentication-Token": token}
+
+    # This should fail - should be a redirect
+    response = client_nc.get("/myview", headers=h, follow_redirects=False)
+    assert response.status_code == 200
+
+
+@pytest.mark.settings(freshness_allow_auth_token=False)
+def test_authn_freshness_nc_no(app, client_nc, get_message):
     # If don't send session cookie - then freshness always fails
     @auth_required(within=30)
     def myview():
@@ -1372,7 +1392,7 @@ def test_nodatastore(app):
 
 @pytest.mark.filterwarnings("ignore:.*Replacing login_manager.*:DeprecationWarning")
 def test_reuse_security_object(sqlalchemy_datastore):
-    # See: https://github.com/Flask-Middleware/flask-security/issues/518
+    # See: https://github.com/pallets-eco/flask-security/issues/518
     # Let folks re-use the Security object (mostly for testing).
     security = Security(datastore=sqlalchemy_datastore)
 
@@ -1503,3 +1523,32 @@ def test_simplify_url():
     assert s == "/login"
     s = simplify_url("https:/myhost/profile", "https://localhost/login")
     assert s == "https://localhost/login"
+
+
+@pytest.mark.parametrize(
+    "verify_secret_key, verify_fallbacks, should_pass",
+    [
+        ("new_secret", [], False),  # Should fail - only new key
+        ("new_secret", ["old_secret"], True),  # Should pass - has fallback
+        ("old_secret", [], True),  # Should pass - using original key
+        ("wrong_secret", ["also_wrong"], False),  # Should fail - no valid keys
+    ],
+    ids=["new-key-only", "with-fallback", "original-key", "wrong-keys"],
+)
+def test_secret_key_fallbacks(app, verify_secret_key, verify_fallbacks, should_pass):
+    # Create token with original key
+    app.config["SECRET_KEY"] = "old_secret"
+    serializer = _get_serializer(app, "CONFIRM")
+    token = serializer.dumps({"data": "test"})
+
+    # Attempt verification with different key configurations
+    app.config["SECRET_KEY"] = verify_secret_key
+    app.config["SECRET_KEY_FALLBACKS"] = verify_fallbacks
+    serializer = _get_serializer(app, "CONFIRM")
+
+    if should_pass:
+        data = serializer.loads(token)
+        assert data["data"] == "test"
+    else:
+        with pytest.raises(BadTimeSignature):
+            serializer.loads(token)

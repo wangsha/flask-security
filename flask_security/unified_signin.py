@@ -79,9 +79,9 @@ from .utils import (
     get_message,
     get_url,
     get_within_delta,
+    handle_already_auth,
     is_user_authenticated,
     localize_callback,
-    json_error_response,
     login_user,
     lookup_identity,
     propagate_next,
@@ -94,7 +94,7 @@ from .webauthn import has_webauthn
 
 if t.TYPE_CHECKING:  # pragma: no cover
     from flask.typing import ResponseValue
-    from .datastore import User
+    from flask_security import UserMixin
 
 if get_quart_status():  # pragma: no cover
     from quart import redirect
@@ -147,7 +147,7 @@ class _UnifiedPassCodeForm(Form):
     """Common form for signin and verify/reauthenticate."""
 
     # filled in by caller
-    user: User
+    user: UserMixin
 
     # Filled in here
     authn_via: str
@@ -364,7 +364,7 @@ class UnifiedSigninSetupValidateForm(Form):
     """The unified sign in setup validation form"""
 
     # These 2 filled in by view
-    user: User
+    user: UserMixin
     totp_secret: str
 
     passcode = StringField(
@@ -413,7 +413,7 @@ def _send_code_helper(form, send_magic_link):
 
 
 @anonymous_user_required
-@unauth_csrf(fall_through=True)
+@unauth_csrf()
 def us_signin_send_code() -> ResponseValue:
     """
     Send code view. POST only.
@@ -533,39 +533,26 @@ def us_verify_send_code() -> ResponseValue:
     )
 
 
-@unauth_csrf(fall_through=True)
+@unauth_csrf()
 def us_signin() -> ResponseValue:
     """
     Unified sign in view.
     This takes an identity (as configured in USER_IDENTITY_ATTRIBUTES)
     and a passcode (password or OTP).
-
-    Allow already authenticated users. For GET this is useful for
-    single-page-applications on refresh - session still active but need to
-    access user info and csrf-token.
-    For POST - redirects to POST_LOGIN_VIEW (forms) or returns 400 (json).
     """
-
-    if is_user_authenticated(current_user) and request.method == "POST":
-        # Just redirect current_user to POST_LOGIN_VIEW (or next).
-        # While its tempting to try to logout the current user and login the
-        # new requested user - that simply doesn't work with CSRF.
-
-        # While this is close to anonymous_user_required - it differs in that
-        # it uses get_post_login_redirect which correctly handles 'next'.
-        # TODO: consider changing anonymous_user_required to also call
-        # get_post_login_redirect - not sure why it never has?
-        if _security._want_json(request):
-            payload = json_error_response(
-                errors=get_message("ANONYMOUS_USER_REQUIRED")[0]
-            )
-            return _security._render_json(payload, 400, None, None)
-        else:
-            return redirect(get_post_login_redirect())
-
     form = t.cast(UnifiedSigninForm, build_form_from_request("us_signin_form"))
     form.submit.data = True
     form.submit_send_code.data = False
+    code_methods = _compute_code_methods()
+    payload = {
+        "available_methods": cv("US_ENABLED_METHODS"),
+        "code_methods": code_methods,
+        "identity_attributes": get_identity_attributes(),
+    }
+
+    if is_user_authenticated(current_user):
+        return handle_already_auth(form, payload=payload)
+
     # Clean out any potential old session info - in case of previous
     # aborted 2FA attempt.
     tf_clean_session()
@@ -590,27 +577,22 @@ def us_signin() -> ResponseValue:
             return base_render_json(form, include_auth_token=True)
 
         return redirect(get_post_login_redirect())
-    elif request.method == "POST" and cv("RETURN_GENERIC_RESPONSES"):
+
+    # Here on GET or failed POST validate
+    if request.method == "POST" and cv("RETURN_GENERIC_RESPONSES"):
         rinfo = dict(
             identity=dict(replace_msg="GENERIC_AUTHN_FAILED"),
             passcode=dict(replace_msg="GENERIC_AUTHN_FAILED"),
         )
         form_errors_munge(form, rinfo)
 
-    # Here on GET or failed POST validate
-    code_methods = _compute_code_methods()
-    if _security._want_json(request):
-        payload = {
-            "available_methods": cv("US_ENABLED_METHODS"),
-            "code_methods": code_methods,
-            "identity_attributes": get_identity_attributes(),
-        }
-        return base_render_json(form, include_user=False, additional=payload)
+    if request.method == "GET":
+        # set CSRF COOKIE if configured. This is the equivalent of forms and
+        # base_render_json always sending the csrf_token
+        session["fs_cc"] = "set"
 
-    if is_user_authenticated(current_user):
-        # Basically a no-op if authenticated - just perform the same
-        # post-login redirect as if user just logged in.
-        return redirect(get_post_login_redirect())
+    if _security._want_json(request):
+        return base_render_json(form, include_user=False, additional=payload)
 
     # On error - wipe code
     form.passcode.data = None
@@ -783,7 +765,9 @@ def us_setup() -> ResponseValue:
     setup_methods = _compute_setup_methods()
     active_methods = _compute_active_methods(current_user)
     form.chosen_method.choices = [
-        c for c in form.setup_choices if c[0] not in active_methods
+        c
+        for c in form.setup_choices
+        if c[0] not in active_methods and c[0] in setup_methods
     ]
     form.delete_method.choices = [
         c for c in form.delete_choices if c[0] in active_methods
@@ -821,7 +805,9 @@ def us_setup() -> ResponseValue:
                 "US_CURRENT_METHODS", method_list=current_methods
             )[0]
             form.chosen_method.choices = [
-                c for c in form.setup_choices if c[0] not in active_methods
+                c
+                for c in form.setup_choices
+                if c[0] not in active_methods and c[0] in setup_methods
             ]
             form.delete_method.choices = [
                 c for c in form.delete_choices if c[0] in active_methods
@@ -829,7 +815,7 @@ def us_setup() -> ResponseValue:
             form.delete_method.data = None
             us_profile_changed.send(
                 current_app._get_current_object(),  # type: ignore
-                _async_wrapper=current_app.ensure_sync,
+                _async_wrapper=current_app.ensure_sync,  # type: ignore[arg-type]
                 user=current_user,
                 methods=delete_method,
                 delete=True,
@@ -918,6 +904,10 @@ def us_setup() -> ResponseValue:
             **_security._run_ctx_processor("us_setup"),
         )
 
+    phone_number = None
+    if "sms" in cv("US_ENABLED_METHODS"):
+        phone_number = current_user.us_phone_number
+
     # Get here on initial new setup (GET)
     # Or failure of POST
     if _security._want_json(request):
@@ -926,12 +916,12 @@ def us_setup() -> ResponseValue:
             "available_methods": cv("US_ENABLED_METHODS"),
             "active_methods": active_methods,
             "setup_methods": setup_methods,
-            "phone": current_user.us_phone_number,
+            "phone": phone_number,
         }
         return base_render_json(form, include_user=False, additional=payload)
 
     # Show user existing phone number
-    form.phone.data = current_user.us_phone_number
+    form.phone.data = phone_number
     form.chosen_method.data = None
     form.delete_method.data = None
     return _security.render_template(
@@ -982,18 +972,19 @@ def us_setup_validate(token: str) -> ResponseValue:
 
         us_profile_changed.send(
             current_app._get_current_object(),  # type: ignore
-            _async_wrapper=current_app.ensure_sync,
+            _async_wrapper=current_app.ensure_sync,  # type: ignore[arg-type]
             user=current_user,
             methods=[method],
             delete=False,
         )
         if _security._want_json(request):
+            phone_number = None
+            if "sms" in cv("US_ENABLED_METHODS"):
+                phone_number = current_user.us_phone_number
             return base_render_json(
                 form,
                 include_user=False,
-                additional=dict(
-                    chosen_method=method, phone=current_user.us_phone_number
-                ),
+                additional=dict(chosen_method=method, phone=phone_number),
             )
         else:
             do_flash(*get_message("US_SETUP_SUCCESSFUL"))

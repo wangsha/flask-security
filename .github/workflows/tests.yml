@@ -4,11 +4,11 @@ name: tests
 on:
   push:
     branches:
-      - master
+      - main
       - "[0-9]+.[0-9]+.x"
   pull_request:
     branches:
-      - master
+      - main
       - "[0-9]+.[0-9]+.x"
 
   # Allows you to run this workflow manually from the Actions tab
@@ -21,16 +21,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {python: '3.8', tox: 'py38-release'}
-          - {python: '3.8', tox: 'py38-low'}
           - {python: '3.9', tox: 'py39-release'}
           - {python: '3.9', tox: 'py39-low'}
           - {python: '3.10', tox: 'py310-release'}
           - {python: '3.10', tox: 'py310-low'}
           - {python: '3.11', tox: 'py311-release'}
           - {python: '3.11', tox: 'py311-low'}
-          - { python: '3.12', tox: 'py312-release' }
-          - { python: '3.12', tox: 'py312-low' }
+          - {python: '3.12', tox: 'py312-release' }
+          - {python: '3.12', tox: 'py312-low' }
           - {python: 'pypy-3.9', tox: 'pypy39-release'}
           - {python: 'pypy-3.9', tox: 'pypy39-low'}
 
@@ -43,7 +41,7 @@ jobs:
         run: |
           python -m pip install -U pip
       - name: cache pip
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: pip-${{ runner.os }}-${{ matrix.tox }}-${{ hashFiles('pyproject.toml') }}-${{ hashFiles('tox.ini') }}-${{ hashFiles('requirements/*.txt') }}
@@ -77,10 +75,10 @@ jobs:
         - name: update pip
           run: |
             python -m pip install -U pip
-        - name: nobabel, nowebauthn, noauthlib, async
+        - name: nobabel, nowebauthn, noauthlib, noflasksqlalchemy, async
           run: |
             pip install tox
-            tox -e nobabel,nowebauthn,noauthlib,async
+            tox -e nobabel,nowebauthn,noauthlib,noflasksqlalchemy,async
   cov:
       runs-on: ubuntu-latest
       steps:
@@ -96,10 +94,11 @@ jobs:
             pip install tox coverage
             tox -e coverage
         - name: Upload coverage to Codecov
-          uses: codecov/codecov-action@v3
+          uses: codecov/codecov-action@v4
           with:
-            fail_ci_if_error: false
+            fail_ci_if_error: true
             verbose: true
+            token: ${{ secrets.codecov_token }}
   realdb:
       runs-on: ubuntu-latest
 
@@ -121,12 +120,12 @@ jobs:
         - uses: actions/checkout@v4
         - uses: actions/setup-python@v5
           with:
-            python-version: "3.9"
+            python-version: "3.11"
         - name: update pip
           run: |
             python -m pip install -U pip
         - name: cache pip
-          uses: actions/cache@v3
+          uses: actions/cache@v4
           with:
             path: ~/.cache/pip
             key: pip-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}-${{ hashFiles('tox.ini') }}-${{ hashFiles('requirements/*.txt') }}

@@ -4,7 +4,7 @@
 
     Unified signin tests
 
-    :copyright: (c) 2019-2023 by J. Christopher Wagner (jwag).
+    :copyright: (c) 2019-2024 by J. Christopher Wagner (jwag).
     :license: MIT, see LICENSE for more details.
 
 """
@@ -29,9 +29,11 @@ from tests.test_utils import (
     check_location,
     check_xlation,
     get_form_action,
+    get_session,
     is_authenticated,
     logout,
     reset_fresh,
+    reset_fresh_auth_token,
     setup_tf_sms,
 )
 from tests.test_webauthn import HackWebauthnUtil, reg_2_keys
@@ -557,20 +559,25 @@ def test_admin_setup_reset(app, client_nc, get_message):
 
 
 @pytest.mark.settings(post_login_view="/post_login")
-def test_get_already_authenticated(client):
+def test_get_already_authenticated(app, client):
     response = authenticate(client, follow_redirects=True)
     assert b"Welcome matt@lp.com" in response.data
-    response = client.get("/us-signin", follow_redirects=True)
+    # This should ignore next
+    response = client.get("/us-signin?next=/page1", follow_redirects=True)
     assert b"Post Login" in response.data
 
+    # should still get extra goodies
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    response = client.get("/us-signin", headers=headers)
+    assert response.status_code == 200
 
-@pytest.mark.settings(post_login_view="/post_login")
-def test_get_already_authenticated_next(client):
-    response = authenticate(client, follow_redirects=True)
-    assert b"Welcome matt@lp.com" in response.data
-    # This should override post_login_view
-    response = client.get("/us-signin?next=/page1", follow_redirects=True)
-    assert b"Page 1" in response.data
+    jresponse = response.json["response"]
+    assert all(
+        a in jresponse
+        for a in ["code_methods", "identity_attributes", "available_methods"]
+    )
+    assert "authentication_token" not in jresponse["user"]
+    assert all(a in jresponse["user"] for a in ["email", "last_update"])
 
 
 @pytest.mark.settings(post_login_view="/post_login")
@@ -580,12 +587,6 @@ def test_post_already_authenticated(client, get_message):
     data = dict(email="matt@lp.com", password="password")
     response = client.post("/us-signin", data=data, follow_redirects=True)
     assert b"Post Login" in response.data
-    response = client.post("/us-signin?next=/page1", data=data, follow_redirects=True)
-    assert b"Page 1" in response.data
-    # should work in form as well
-    ndata = dict(email="matt@lp.com", password="password", next="/page1")
-    response = client.post("/us-signin", data=ndata, follow_redirects=True)
-    assert b"Page 1" in response.data
 
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
     response = client.post("/us-signin", json=data, headers=headers)
@@ -716,7 +717,8 @@ def test_verify_link_spa(app, client, get_message):
     assert is_authenticated(client, get_message)
 
 
-def test_setup(app, client, get_message):
+def test_setup(app, clients, get_message):
+    client = clients
     set_email(app)
     us_authenticate(client)
     response = client.get("us-setup")
@@ -871,9 +873,11 @@ def test_setup_json(app, client_nc, get_message):
     user_identity_attributes=UIA_EMAIL_PHONE,
 )
 def test_setup_json_no_session(app, client_nc, get_message):
-    # Test that with normal config freshness is required so must have session.
+    # Test that with normal config freshness is required and we can use auth_token
+    # for that
     set_email(app)
-    token = us_authenticate(client_nc)
+    us_authenticate(client_nc)
+    token = reset_fresh_auth_token(app, app.config["SECURITY_FRESHNESS"])
     headers = {
         "Authentication-Token": token,
         "Accept": "application/json",
@@ -883,6 +887,26 @@ def test_setup_json_no_session(app, client_nc, get_message):
     assert response.status_code == 401
     assert response.json["response"]["reauth_required"]
     assert "WWW-Authenticate" not in response.headers
+
+    # re-verify
+    client_nc.post(
+        "/us-verify/send-code",
+        json=dict(identity="matt@lp.com", chosen_method="email"),
+        headers=headers,
+    )
+    outbox = app.mail.outbox
+    matcher = re.match(r".*Token:(\d+).*", outbox[1].body, re.IGNORECASE | re.DOTALL)
+    code = matcher.group(1)
+    response = client_nc.post(
+        "/us-verify?include_auth_token", json=dict(passcode=code), headers=headers
+    )
+    assert response.status_code == 200
+    token = response.json["response"]["user"]["authentication_token"]
+    headers["Authentication-Token"] = token
+
+    # should work now
+    response = client_nc.get("/us-setup", headers=headers)
+    assert response.status_code == 200
 
 
 @pytest.mark.settings(api_enabled_methods=["basic"])
@@ -982,7 +1006,8 @@ def test_unique_phone(app, client, get_message):
 
 
 @pytest.mark.settings(freshness=timedelta(minutes=0))
-def test_verify(app, client, get_message):
+def test_verify(app, clients, get_message):
+    client = clients
     # Test setup when re-authenticate required
     # With  freshness set to 0 - the first call should require reauth (by
     # redirecting); but the second should work due to grace period.
@@ -1636,6 +1661,7 @@ def test_bad_sender(app, client, get_message):
 @pytest.mark.registerable()
 def test_replace_send_code(app, get_message):
     pytest.importorskip("sqlalchemy")
+    pytest.importorskip("flask_sqlalchemy")
 
     from flask_sqlalchemy import SQLAlchemy
     from flask_security.models import fsqla_v2 as fsqla
@@ -1660,19 +1686,18 @@ def test_replace_send_code(app, get_message):
     ds = SQLAlchemyUserDatastore(db, User, Role)
     app.security = Security(app, datastore=ds)
 
-    with app.app_context():
-        client = app.test_client()
+    client = app.test_client()
 
-        # since we don't use client fixture - have to add user
-        data = dict(email="trp@lp.com", password="password")
-        response = client.post("/register", data=data, follow_redirects=True)
-        assert b"Welcome trp@lp.com" in response.data
-        logout(client)
+    # since we don't use client fixture - have to add user
+    data = dict(email="trp@lp.com", password="password")
+    response = client.post("/register", data=data, follow_redirects=True)
+    assert b"Welcome trp@lp.com" in response.data
+    logout(client)
 
-        set_phone(app, email="trp@lp.com")
-        data = dict(identity="trp@lp.com", chosen_method="sms")
-        response = client.post("/us-signin/send-code", data=data, follow_redirects=True)
-        assert b"Code has been sent" in response.data
+    set_phone(app, email="trp@lp.com")
+    data = dict(identity="trp@lp.com", chosen_method="sms")
+    response = client.post("/us-signin/send-code", data=data, follow_redirects=True)
+    assert b"Code has been sent" in response.data
 
 
 @pytest.mark.settings(us_enabled_methods=["password"])
@@ -2214,3 +2239,143 @@ def test_empty_password_xlate(app, client, get_message):
             ).encode()
             in response.data
         )
+
+
+@pytest.mark.two_factor()
+@pytest.mark.csrf(csrfprotect=True)
+@pytest.mark.settings(CSRF_COOKIE_NAME="XSRF-Token")
+def test_csrf_2fa_us_cookie(app, client):
+    # Use XSRF-Token cookie for entire login sequence
+    sms_sender = SmsSenderFactory.createSender("test")
+    response = client.get(
+        "/us-signin", data={}, headers={"Content-Type": "application/json"}
+    )
+    assert client.get_cookie("XSRF-Token")
+    csrf_token = response.json["response"]["csrf_token"]
+    assert csrf_token == client.get_cookie("XSRF-Token").value
+
+    # verify requires CSRF
+    response = client.post(
+        "/us-signin",
+        json=dict(identity="gal@lp.com", passcode="password"),
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 400
+    assert response.json["response"]["errors"][0] == "The CSRF token is missing."
+
+    response = client.post(
+        "/us-signin",
+        json=dict(identity="gal@lp.com", passcode="password"),
+        headers={
+            "Content-Type": "application/json",
+            "X-CSRF-Token": client.get_cookie("XSRF-Token").value,
+        },
+    )
+    assert b'"code": 200' in response.data
+    session = get_session(response)
+    assert session["tf_state"] == "ready"
+
+    assert sms_sender.get_count() == 1
+    code = sms_sender.messages[0].split()[-1]
+
+    response = client.post(
+        "/tf-validate",
+        json=dict(code=code),
+        headers={
+            "Content-Type": "application/json",
+            "X-CSRF-Token": client.get_cookie("XSRF-Token").value,
+        },
+    )
+    assert response.status_code == 200
+
+    # verify original session csrf_token still works.
+    response = client.post(
+        "/json_auth",
+        json=dict(label="label"),
+        headers={"Content-Type": "application/json", "X-CSRF-Token": csrf_token},
+    )
+    assert response.status_code == 200
+
+    # use XSRF_Cookie to send in csrf_token
+    response = client.post(
+        "/json_auth",
+        json=dict(label="label"),
+        headers={
+            "Content-Type": "application/json",
+            "X-CSRF-Token": client.get_cookie("XSRF-Token").value,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json["label"] == "label"
+
+
+@pytest.mark.settings(us_enabled_methods=["password", "email"])
+def test_us_setup_email(app, client, get_message):
+    set_email(app)
+    us_authenticate(client)
+    chosen_methods_choices = []
+
+    def recorder(template, us_setup_form, **kwargs):
+        chosen_methods_choices.extend(us_setup_form.chosen_method.choices)
+        return "ok"
+
+    app.security.render_template = recorder
+
+    client.get("/us-setup")
+
+    assert len(chosen_methods_choices) == 0
+
+
+@pytest.mark.settings(us_enabled_methods=["email", "authenticator"])
+def test_us_setup_authenticator(app, client, get_message):
+    set_email(app)
+    us_authenticate(client)
+    chosen_methods_choices = []
+
+    def recorder(template, us_setup_form, **kwargs):
+        chosen_methods_choices.extend(us_setup_form.chosen_method.choices)
+        return "ok"
+
+    app.security.render_template = recorder
+
+    client.get("/us-setup")
+
+    assert len(chosen_methods_choices) == 1
+    assert chosen_methods_choices[0][0] == "authenticator"
+
+
+@pytest.mark.settings(us_enabled_methods=["email", "sms"])
+def test_us_setup_sms(app, client, get_message):
+    set_email(app)
+    us_authenticate(client)
+    chosen_methods_choices = []
+
+    def recorder(template, us_setup_form, **kwargs):
+        chosen_methods_choices.extend(us_setup_form.chosen_method.choices)
+        return "ok"
+
+    app.security.render_template = recorder
+
+    client.get("/us-setup")
+
+    assert len(chosen_methods_choices) == 1
+    assert chosen_methods_choices[0][0] == "sms"
+
+
+@pytest.mark.settings(us_enabled_methods=["email", "sms", "authenticator"])
+def test_us_setup_authenticator_sms(app, client, get_message):
+    set_email(app)
+    us_authenticate(client)
+    chosen_methods_choices = []
+
+    def recorder(template, us_setup_form, **kwargs):
+        chosen_methods_choices.extend(us_setup_form.chosen_method.choices)
+        return "ok"
+
+    app.security.render_template = recorder
+
+    client.get("/us-setup")
+
+    assert len(chosen_methods_choices) == 2
+    assert chosen_methods_choices[0][0] == "authenticator"
+    assert chosen_methods_choices[1][0] == "sms"

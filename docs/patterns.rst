@@ -101,13 +101,16 @@ Flask-Security itself uses this as part of securing the following endpoints:
     - .tf_setup ("/tf-setup")
     - .us_setup ("/us-setup")
     - .mf_recovery_codes ("/mf-recovery-codes")
+    - .change_email ("/change-email")
 
-Using the :py:data:`SECURITY_FRESHNESS` and :py:data:`SECURITY_FRESHNESS_GRACE_PERIOD` configuration variables.
+using the :py:data:`SECURITY_FRESHNESS` and :py:data:`SECURITY_FRESHNESS_GRACE_PERIOD` configuration variables.
 
 .. tip::
-    Freshness requires a session (cookie) be sent as part of the request. Without
-    a session, freshness will fail. If your application doesn't/can't send session cookies
-    you can disable freshness by setting ``SECURITY_FRESHNESS`` to ``timedelta(minutes=-1)``
+    The timestamp of the users last successful authentication is stored in the session
+    as well as in the authentication token. One of these must be presented or freshness
+    will fail. You can disallow using the value in the authentication token by setting
+    :py:data:`SECURITY_FRESHNESS_ALLOW_AUTH_TOKEN` to ``False``.
+    You can disable freshness by setting ``SECURITY_FRESHNESS`` to ``timedelta(minutes=-1)``
 
 .. _redirect_topic:
 
@@ -230,6 +233,19 @@ and the application endpoints (protected with Flask-Security decorators such as 
 If your application just uses forms that are derived from ``Flask-WTF::Flaskform`` - you are done.
 Note that all of Flask-Security's endpoints are form based (regardless of how the request was made).
 
+Behind-The-Scenes
+++++++++++++++++++
+Depending on configuration, there are 3 places CSRF tokens can be checked:
+  #) As part of form validation for any form derived from FlaskForm (which all Flask-Security
+     forms are). An error here is recorded in the ``csrf_token`` field and the calling view
+     decides whether to return 200 or 400.
+     This is the default if no other configuration changes are made.
+  #) As part of an @before_request handler that Flask-WTF sets up if CSRFprotect() is called. On error
+     this always returns HTTP 400 and small snippet of HTML. This can be disabled
+     by setting config["WTF_CSRF_CHECK_DEFAULT"] = False.
+  #) As part of a Flask-Security decorator (:func:`.unauth_csrf`, :func:`.auth_required`). On
+     error either a JSON response is returned OR CSRFError exception is raised and 400 is returned with the small snippet of HTML
+     (the exception and default response is part of Flask-WTF).
 
 CSRF: Single-Page-Applications and AJAX/XHR
 ++++++++++++++++++++++++++++++++++++++++++++
@@ -256,7 +272,7 @@ Explicit fetch and send of csrf-token
 The current session CSRF token
 is returned on every JSON GET request (to a Flask-Security endpoint) as ``response['csrf_token`]``.
 For web applications that ARE served via flask, it is even easier to get the csrf-token -
-`<https://flask-wtf.readthedocs.io/en/1.0.x/csrf/>`_ gives some useful tips.
+`<https://flask-wtf.readthedocs.io/en/1.2.x/csrf/>`_ gives some useful tips.
 
 Armed with the csrf-token, the UI must include that in every mutating operation.
 Be careful NOT to include the csrf-token in non-mutating requests (such as GETs).
@@ -293,7 +309,7 @@ Note that we use the header name ``X-CSRF-Token`` as that is one of the default
 headers configured in Flask-WTF (*WTF_CSRF_HEADERS*)
 
 To protect your application's endpoints (that presumably are not using Flask forms),
-you need to enable CSRF as described in the FlaskWTF `documentation <https://flask-wtf.readthedocs.io/en/1.1.x/csrf/>`_: ::
+you need to enable CSRF as described in the FlaskWTF `documentation <https://flask-wtf.readthedocs.io/en/1.2.x/csrf/>`_: ::
 
     flask_wtf.CSRFProtect(app)
 
@@ -312,11 +328,16 @@ Be aware that if you enable this it will ONLY work if you send the session cooki
     is to set `WTF_CSRF_CHECK_DEFAULT` to `False` - which will disable the @before_request and let Flask-Security handle CSRF protection
     including properly returning a JSON response if the caller asks for it.
 
+.. danger::
+    If you set `WTF_CSRF_CHECK_DEFAULT` to `False` this will turn off CSRF checking for all your endpoints unless they are protected with
+    @auth_required() or have explicit CSRF checking.
+
 
 Using a Cookie
 --------------
-You can instruct Flask-Security to send a cookie that contains the csrf token. This can be very
-convenient since various javascript AJAX packages are pre-configured to extract the contents of a cookie
+You can instruct Flask-Security to send a cookie that contains the csrf token.
+The cookie will be set on a call to ``GET /login`` or ``GET /us-signin`` - as well as after a successful authentication.
+This can be very convenient since various javascript AJAX packages are pre-configured to extract the contents of a cookie
 and send it on every mutating request as an HTTP header. `axios`_ for example has a default configuration
 that it will look for a cookie named ``XSRF-TOKEN`` and will send the contents of that back
 in an HTTP header called ``X-XSRF-Token``. This means that if you use that package you don't need to make
@@ -327,9 +348,6 @@ any changes to your UI and just need the following configuration::
 
     # Don't have csrf tokens expire (they are invalid after logout)
     app.config["WTF_CSRF_TIME_LIMIT"] = None
-
-    # You can't get the cookie until you are logged in.
-    app.config["SECURITY_CSRF_IGNORE_UNAUTH_ENDPOINTS"] = True
 
     # Enable CSRF protection
     flask_wtf.CSRFProtect(app)

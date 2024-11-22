@@ -12,15 +12,12 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import re
+import time
 
 from flask.json.tag import TaggedJSONSerializer
 from flask.signals import message_flashed
 
 from flask_security import Security, SmsSenderBaseClass, SmsSenderFactory, UserMixin
-from flask_security.datastore import (
-    SQLAlchemyUserDatastore,
-    SQLAlchemySessionUserDatastore,
-)
 from flask_security.signals import (
     login_instructions_sent,
     reset_password_instructions_sent,
@@ -173,6 +170,22 @@ def reset_fresh(client, within):
     return old_paa
 
 
+def reset_fresh_auth_token(app, within, email="matt@lp.com"):
+    # Assumes client authenticated.
+    # Returns a new auth token that will force the NEXT request,
+    # if protected with a freshness check to require a fresh authentication
+    with app.test_request_context("/"):
+        user = app.security.datastore.find_user(email=email)
+        tdata = dict(ver=str(5))
+        if hasattr(user, "fs_token_uniquifier"):
+            tdata["uid"] = str(user.fs_token_uniquifier)
+        else:
+            tdata["uid"] = str(user.fs_uniquifier)
+        tdata["fs_paa"] = time.time() - within.total_seconds() - 100
+        tdata["exp"] = int(app.config.get("SECURITY_TOKEN_EXPIRE_TIMESTAMP")(user))
+        return app.security.remember_token_serializer.dumps(tdata)
+
+
 def get_form_action(response, ordinal=0):
     # Return the URL that the form WOULD post to - this is useful to check
     # how our templates actually work (e.g. propagation of 'next')
@@ -186,7 +199,7 @@ def get_form_action(response, ordinal=0):
 
 def get_form_input(response, field_id):
     # return value of field with the id == field_id or None if not found
-    rex = f'<input id="{field_id}"[^>]*value="([^"]*)">'
+    rex = f'<input [^>]*id="{field_id}"[^>]*value="([^"]*)">'
     matcher = re.findall(
         rex,
         response.data.decode("utf-8"),
@@ -278,21 +291,17 @@ def init_app_with_options(app, datastore, **options):
     populate_data(app)
 
 
-def get_num_queries(datastore):
-    """Return # of queries executed during test.
-    return None if datastore doesn't support this.
-    """
-    if is_sqlalchemy(datastore):
-        from flask_sqlalchemy.record_queries import get_recorded_queries
+@contextmanager
+def capture_queries(datastore):
+    from sqlalchemy import event
 
-        return len(get_recorded_queries())
-    return None
+    queries = []
 
+    @event.listens_for(datastore.db.session, "do_orm_execute")
+    def _do_orm_execute(orm_execute_state):
+        queries.append(orm_execute_state)
 
-def is_sqlalchemy(datastore):
-    return isinstance(datastore, SQLAlchemyUserDatastore) and not isinstance(
-        datastore, SQLAlchemySessionUserDatastore
-    )
+    yield queries
 
 
 class SmsTestSender(SmsSenderBaseClass):

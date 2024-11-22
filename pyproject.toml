@@ -1,22 +1,18 @@
-[build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "Flask-Security-Too"
+name = "Flask-Security"
 description = "Quickly add security features to your Flask application."
 readme.content-type = "text/x-rst"
 readme.file = "README.rst"
 keywords = ["flask security"]
-# license = "MIT"
+license = { file = "LICENSE.txt" }
 maintainers = [{ name = "Chris Wagner", email = "jwag.wagner+github@gmail.com"}]
 authors = [{ name = "Matt Wright"}, { name = "Chris Wagner", email = "jwag.wagner+github@gmail.com"}]
-requires-python = ">=3.8"
-urls.Documentation = "https://flask-security-too.readthedocs.io"
-urls.Homepage = "https://github.com/Flask-Middleware/flask-security"
-urls.Source = "https://github.com/Flask-Middleware/flask-security"
-urls.Tracker = "https://github.com/Flask-Middleware/flask-security/issues"
-urls.Releases = "https://pypi.org/project/Flask-Security-Too/"
+requires-python = ">=3.9"
+urls.Documentation = "https://flask-security.readthedocs.io"
+urls.Homepage = "https://github.com/pallets-eco/flask-security"
+urls.Source = "https://github.com/pallets-eco/flask-security"
+urls.Tracker = "https://github.com/pallets-eco/flask-security/issues"
+urls.Releases = "https://pypi.org/project/Flask-Security/"
 classifiers=[
     "Environment :: Web Environment",
     "Framework :: Flask",
@@ -27,7 +23,6 @@ classifiers=[
     "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -41,8 +36,8 @@ dynamic = [
 ]
 dependencies = [
     # flask dependencies include werkzeug, jinja2, itsdangerous, click, blinker
-    "Flask>=2.3.2",
-    "Flask-Login>=0.6.2",
+    "Flask>=3.0.0",
+    "Flask-Login>=0.6.3",
     "Flask-Principal>=0.4.0",
     "Flask-WTF>=1.1.2",
     "email-validator>=2.0.0",
@@ -54,16 +49,17 @@ dependencies = [
 
 [project.optional-dependencies]
 babel = ["babel>=2.12.1", "flask_babel>=3.1.0"]
-fsqla = ["flask_sqlalchemy>=3.0.3", "sqlalchemy>=2.0.12", "sqlalchemy-utils>=0.41.1"]
-common = ["bcrypt>=4.0.1", "flask_mailman>=0.3.0", "bleach>=6.0.0"]
+fsqla = ["flask_sqlalchemy>=3.1.0", "sqlalchemy>=2.0.18", "sqlalchemy-utils>=0.41.1"]
+common = ["argon2_cffi>=21.3.0", "bcrypt>=4.0.1", "flask_mailman>=0.3.0", "bleach>=6.0.0"]
 mfa = ["cryptography>=40.0.2", "qrcode>=7.4.2", "phonenumberslite>=8.13.11", "webauthn>=2.0.0"]
 low = [
     # Lowest supported versions
-    "Flask==2.3.2",
-    "Flask-SQLAlchemy==3.0.3",
+    "Flask==3.0.0",
+    "Flask-SQLAlchemy==3.1.0",
+    "Flask-SQLAlchemy-Lite==0.1.0;python_version>='3.10'",
     "Flask-Babel==3.1.0",
     "Flask-Mailman==0.3.0",
-    "Flask-Login==0.6.2",
+    "Flask-Login==0.6.3",
     "Flask-WTF==1.1.2",
     "peewee==3.16.2",
     "argon2_cffi==21.3.0",
@@ -75,7 +71,7 @@ low = [
     "jinja2==3.1.2",
     "itsdangerous==2.1.2",
     "markupsafe==2.1.2",
-    "mongoengine==0.27.0",
+    "mongoengine==0.29.1",
     "mongomock==4.1.2",
     "pony==0.7.16;python_version<'3.11'",
     "phonenumberslite==8.13.11",
@@ -84,15 +80,45 @@ low = [
     "requests",
     # passlib required setuptools
     "setuptools",
-    "sqlalchemy==2.0.12",
+    "sqlalchemy==2.0.18",
     "sqlalchemy-utils==0.41.1",
     "webauthn==2.0.0",
-    "werkzeug==2.3.3",
+    "werkzeug==3.0.1",
     "zxcvbn==4.4.28"
 ]
+[build-system]
+requires = ["flit_core >=3.8,<4"]
+build-backend = "flit_core.buildapi"
 
-[tool.setuptools.dynamic]
-version = {attr = "flask_security.__version__"}
+[tool.flit.module]
+name = "flask_security"
+
+[tool.flit.sdist]
+include = [
+    "AUTHORS",
+    "CHANGES.rst",
+    "CONTRIBUTING.rst",
+    "LICENSE.txt",
+    ".djlintrc",
+    ".git-blame-ignore-revs",
+    ".gitignore",
+    ".pre-commit-config.yaml",
+    "babel.ini",
+    "codecov.yml",
+    "mypy.ini",
+    "pytest.ini",
+    "tox.ini",
+    "docs/",
+    "examples/",
+    "requirements",
+    "tests/",
+]
+exclude = ["docs/_build/"]
 
 [tool.djlint]
     ignore="H005,H006"  # lang, img height/width
+
+[tool.pyright]
+    include=["flask_security", "tests/view_scaffold.py"]
+    analyzeUnannotatedFunctions = "none"
+    reportMissingImports = false

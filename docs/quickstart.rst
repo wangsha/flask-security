@@ -11,19 +11,24 @@ There are some complete (but simple) examples available in the *examples* direct
     and will need to be added to your requirements.txt (or equivalent) file.
     Flask-Security does some configuration validation and will output error messages to the console
     for some missing packages.
+.. note::
+    The sqlalchemy based quickstarts all use the pre-packaged models - because, well, that's
+    the quickest and easiest way to get started. There is NO REQUIREMENT that your application
+    use these - as long as the required fields are in your models.
 
 .. note::
-    The default ``SECURITY_PASSWORD_HASH`` is "bcrypt" - so be sure to install bcrypt.
-    If you opt for a different hash e.g. "argon2" you will need to install the appropriate package e.g. `argon_cffi`_.
+    The default :data:`SECURITY_PASSWORD_HASH` is "argon2" - so be sure to install `argon2_cffi`_.
+    If you opt for a different hash e.g. "bcrypt" you will need to install the appropriate package.
 .. danger::
    The examples below place secrets in source files. Never do this for your application
    especially if your source code is placed in a public repo. How you pass in secrets
    securely will depend on your deployment model - however in most cases (e.g. docker, lambda)
    using environment variables will be the easiest.
 
-.. _argon_cffi: https://pypi.org/project/argon2-cffi/
+.. _argon2_cffi: https://pypi.org/project/argon2-cffi/
 
-* :ref:`basic-sqlalchemy-application`
+* :ref:`basic-flask-sqlalchemy-application`
+* :ref:`basic-flask-sqlalchemy-lite-application`
 * :ref:`basic-sqlalchemy-application-with-session`
 * :ref:`basic-mongoengine-application`
 * :ref:`basic-peewee-application`
@@ -31,28 +36,28 @@ There are some complete (but simple) examples available in the *examples* direct
 * :ref:`proxy-configuration`
 * :ref:`unit-testing`
 
-.. _basic-sqlalchemy-application:
+.. _basic-flask-sqlalchemy-application:
 
-Basic SQLAlchemy Application
-----------------------------
+Basic Flask-SQLAlchemy Application
+-----------------------------------
 
-SQLAlchemy Install requirements
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Flask-SQLAlchemy Install requirements
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ::
 
      $ python3 -m venv pymyenv
      $ . pymyenv/bin/activate
-     $ pip install flask-security-too[fsqla,common]
+     $ pip install flask-security[fsqla,common]
 
 
-SQLAlchemy Application
-~~~~~~~~~~~~~~~~~~~~~~
+Flask-SQLAlchemy Application
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The following code sample illustrates how to get started as quickly as
-possible using Flask-SQLAlchemy and the built-in model mixins:
+possible using Flask-SQLAlchemy and the built-in model mixins.
 
-::
+.. code-block:: python
 
     import os
 
@@ -67,8 +72,7 @@ possible using Flask-SQLAlchemy and the built-in model mixins:
 
     # Generate a nice key using secrets.token_urlsafe()
     app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY", 'pf9Wkove4IKEAXvy-cQkeDPhv9Cb3Ag-wyJILbq_dFw')
-    # Bcrypt is set as default SECURITY_PASSWORD_HASH, which requires a salt
-    # Generate a good salt using: secrets.SystemRandom().getrandbits(128)
+    # Generate a good salt for password hashing using: secrets.SystemRandom().getrandbits(128)
     app.config['SECURITY_PASSWORD_SALT'] = os.environ.get("SECURITY_PASSWORD_SALT", '146585145368132386173505678016728509634')
 
     # have session and remember cookie be samesite (flask/flask_login)
@@ -100,7 +104,7 @@ possible using Flask-SQLAlchemy and the built-in model mixins:
 
     # Setup Flask-Security
     user_datastore = SQLAlchemyUserDatastore(db, User, Role)
-    app.security = Security(app, user_datastore)
+    security = Security(app, user_datastore)
 
     # Views
     @app.route("/")
@@ -112,8 +116,107 @@ possible using Flask-SQLAlchemy and the built-in model mixins:
     with app.app_context():
         # Create User to test with
         db.create_all()
-        if not app.security.datastore.find_user(email="test@me.com"):
-            app.security.datastore.create_user(email="test@me.com", password=hash_password("password"))
+        if not security.datastore.find_user(email="test@me.com"):
+            security.datastore.create_user(email="test@me.com", password=hash_password("password"))
+        db.session.commit()
+
+    if __name__ == '__main__':
+        app.run()
+
+You can run this either with::
+
+    flask run
+
+or::
+
+    python app.py
+
+.. _basic-flask-sqlalchemy-lite-application:
+
+Basic Flask-SQLAlchemy-Lite Application
+----------------------------------------
+
+Flask-SQLAlchemy Install requirements
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This requires python >= 3.10::
+
+     $ python3 -m venv pymyenv
+     $ . pymyenv/bin/activate
+     $ pip install flask-security[common] sqlalchemy flask-sqlalchemy-lite
+
+Flask-SQLAlchemy-Lite Application
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The following code sample illustrates how to get started as quickly as
+possible using Flask-SQLAlchemy-Lite and the built-in model mixins.
+Note that Flask-SQLAlchemy-Lite is a very thin wrapper above sqlalchemy.orm
+and just provides session and engine initialization. Everything else is
+pure sqlalchemy (unlike Flask-SQLAlchemy).
+
+.. code-block:: python
+
+    import os
+
+    from flask import Flask, render_template_string
+    from flask_sqlalchemy_lite import SQLAlchemy
+    from flask_security import Security, SQLAlchemyUserDatastore, auth_required, hash_password
+    from flask_security.models import sqla as sqla
+
+    # Create app
+    app = Flask(__name__)
+    app.config['DEBUG'] = True
+
+    # Generate a nice key using secrets.token_urlsafe()
+    app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY", 'pf9Wkove4IKEAXvy-cQkeDPhv9Cb3Ag-wyJILbq_dFw')
+    # Generate a good salt for password hashing using: secrets.SystemRandom().getrandbits(128)
+    app.config['SECURITY_PASSWORD_SALT'] = os.environ.get("SECURITY_PASSWORD_SALT", '146585145368132386173505678016728509634')
+
+    # have session and remember cookie be samesite (flask/flask_login)
+    app.config["REMEMBER_COOKIE_SAMESITE"] = "strict"
+    app.config["SESSION_COOKIE_SAMESITE"] = "strict"
+
+    # Use an in-memory db
+    app.config |= {
+        "SQLALCHEMY_ENGINES": {
+            "default": {"url": "sqlite:///:memory:", "pool_pre_ping": True},
+        },
+    }
+
+    # Create database connection object
+    db = SQLAlchemy(app)
+
+    # Define models
+    class Model(DeclarativeBase):
+        pass
+
+    # NOTE: call this PRIOR to declaring models
+    sqla.FsModels.set_db_info(base_model=Model)
+
+    class Role(Model, sqla.FsRoleMixin):
+        __tablename__ = "Role"
+        pass
+
+    class User(Model, sqla.FsUserMixin):
+        __tablename__ = "User"
+        pass
+
+    # Setup Flask-Security
+    user_datastore = FSQLALiteUserDatastore(db, User, Role)
+    security = Security(app, user_datastore)
+
+    # Views
+    @app.route("/")
+    @auth_required()
+    def home():
+        return render_template_string("Hello {{ current_user.email }}")
+
+    # one time setup
+    with app.app_context():
+        # Create User to test with
+        Model.metadata.create_all(db.engine)
+        if not security.datastore.find_user(email="test@me.com"):
+            security.datastore.create_user(email="test@me.com", password=hash_password("password"))
         db.session.commit()
 
     if __name__ == '__main__':
@@ -135,11 +238,11 @@ Basic SQLAlchemy Application with session
 SQLAlchemy Install requirements
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-::
+This requires python >= 3.10::
 
      $ python3 -m venv pymyenv
      $ . pymyenv/bin/activate
-     $ pip install flask-security-too[common] sqlalchemy
+     $ pip install flask-security[common] sqlalchemy
 
 SQLAlchemy Application (w/o Flask-SQLAlchemy)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -151,122 +254,100 @@ possible using `SQLAlchemy in a declarative way
 This example shows how to split your application into 3 files: app.py, database.py
 and models.py.
 
-- app.py ::
+- app.py
+    .. code-block:: python
 
-    import os
+        import os
 
-    from flask import Flask, render_template_string
-    from flask_security import Security, current_user, auth_required, hash_password, \
-         SQLAlchemySessionUserDatastore, permissions_accepted
-    from database import db_session, init_db
-    from models import User, Role
+        from flask import Flask, render_template_string
+        from flask_security import Security, current_user, auth_required, hash_password, \
+             SQLAlchemySessionUserDatastore, permissions_accepted
+        from database import db_session, init_db
+        from models import User, Role
 
-    # Create app
-    app = Flask(__name__)
-    app.config['DEBUG'] = True
+        # Create app
+        app = Flask(__name__)
+        app.config['DEBUG'] = True
 
-    # Generate a nice key using secrets.token_urlsafe()
-    app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY", 'pf9Wkove4IKEAXvy-cQkeDPhv9Cb3Ag-wyJILbq_dFw')
-    # Bcrypt is set as default SECURITY_PASSWORD_HASH, which requires a salt
-    # Generate a good salt using: secrets.SystemRandom().getrandbits(128)
-    app.config['SECURITY_PASSWORD_SALT'] = os.environ.get("SECURITY_PASSWORD_SALT", '146585145368132386173505678016728509634')
-    # Don't worry if email has findable domain
-    app.config["SECURITY_EMAIL_VALIDATOR_ARGS"] = {"check_deliverability": False}
+        # Generate a nice key using secrets.token_urlsafe()
+        app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY", 'pf9Wkove4IKEAXvy-cQkeDPhv9Cb3Ag-wyJILbq_dFw')
+        # Generate a good salt for password hashing using: secrets.SystemRandom().getrandbits(128)
+        app.config['SECURITY_PASSWORD_SALT'] = os.environ.get("SECURITY_PASSWORD_SALT", '146585145368132386173505678016728509634')
+        # Don't worry if email has findable domain
+        app.config["SECURITY_EMAIL_VALIDATOR_ARGS"] = {"check_deliverability": False}
 
-    # manage sessions per request - make sure connections are closed and returned
-    app.teardown_appcontext(lambda exc: db_session.close())
+        # manage sessions per request - make sure connections are closed and returned
+        app.teardown_appcontext(lambda exc: db_session.close())
 
-    # Setup Flask-Security
-    user_datastore = SQLAlchemySessionUserDatastore(db_session, User, Role)
-    app.security = Security(app, user_datastore)
+        # Setup Flask-Security
+        user_datastore = SQLAlchemySessionUserDatastore(db_session, User, Role)
+        security = Security(app, user_datastore)
 
-    # Views
-    @app.route("/")
-    @auth_required()
-    def home():
-        return render_template_string('Hello {{current_user.email}}!')
+        # Views
+        @app.route("/")
+        @auth_required()
+        def home():
+            return render_template_string('Hello {{current_user.email}}!')
 
-    @app.route("/user")
-    @auth_required()
-    @permissions_accepted("user-read")
-    def user_home():
-        return render_template_string("Hello {{ current_user.email }} you are a user!")
+        @app.route("/user")
+        @auth_required()
+        @permissions_accepted("user-read")
+        def user_home():
+            return render_template_string("Hello {{ current_user.email }} you are a user!")
 
-    # one time setup
-    with app.app_context():
-        init_db()
-        # Create a user and role to test with
-        app.security.datastore.find_or_create_role(
-            name="user", permissions={"user-read", "user-write"}
-        )
-        db_session.commit()
-        if not app.security.datastore.find_user(email="test@me.com"):
-            app.security.datastore.create_user(email="test@me.com",
-            password=hash_password("password"), roles=["user"])
-        db_session.commit()
+        # one time setup
+        with app.app_context():
+            init_db()
+            # Create a user and role to test with
+            security.datastore.find_or_create_role(
+                name="user", permissions={"user-read", "user-write"}
+            )
+            db_session.commit()
+            if not security.datastore.find_user(email="test@me.com"):
+                security.datastore.create_user(email="test@me.com",
+                password=hash_password("password"), roles=["user"])
+            db_session.commit()
 
-    if __name__ == '__main__':
-        # run application (can also use flask run)
-        app.run()
+        if __name__ == '__main__':
+            # run application (can also use flask run)
+            app.run()
 
-- database.py ::
+- database.py
+    .. code-block:: python
 
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import scoped_session, sessionmaker
-    from sqlalchemy.ext.declarative import declarative_base
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import scoped_session, sessionmaker
+        from sqlalchemy.ext.declarative import declarative_base
+        from flask_security.models import sqla
 
-    engine = create_engine('sqlite:////tmp/test.db')
-    db_session = scoped_session(sessionmaker(autocommit=False,
-                                             autoflush=False,
-                                             bind=engine))
-    Base = declarative_base()
-    Base.query = db_session.query_property()
+        engine = create_engine('sqlite:////tmp/test.db')
+        db_session = scoped_session(sessionmaker(autocommit=False,
+                                                 autoflush=False,
+                                                 bind=engine))
+        Base = declarative_base()
+        # This creates the RolesUser table and is where
+        # you would pass in non-standard tables names.
+        sqla.FsModels.set_db_info(base_model=Base)
 
-    def init_db():
-        # import all modules here that might define models so that
-        # they will be registered properly on the metadata.  Otherwise
-        # you will have to import them first before calling init_db()
-        import models
-        Base.metadata.create_all(bind=engine)
 
-- models.py ::
+        def init_db():
+            # import all modules here that might define models so that
+            # they will be registered properly on the metadata.  Otherwise
+            # you will have to import them first before calling init_db()
+            import models
+            Base.metadata.create_all(bind=engine)
 
-    from database import Base
-    from flask_security import UserMixin, RoleMixin, AsaList
-    from sqlalchemy.orm import relationship, backref
-    from sqlalchemy.ext.mutable import MutableList
-    from sqlalchemy import Boolean, DateTime, Column, Integer, \
-                        String, ForeignKey
+- models.py
+    .. code-block:: python
 
-    class RolesUsers(Base):
-        __tablename__ = 'roles_users'
-        id = Column(Integer(), primary_key=True)
-        user_id = Column('user_id', Integer(), ForeignKey('user.id'))
-        role_id = Column('role_id', Integer(), ForeignKey('role.id'))
+        from database import Base
+        from flask_security.models import sqla as sqla
 
-    class Role(Base, RoleMixin):
-        __tablename__ = 'role'
-        id = Column(Integer(), primary_key=True)
-        name = Column(String(80), unique=True)
-        description = Column(String(255))
-        permissions = Column(MutableList.as_mutable(AsaList()), nullable=True)
+        class Role(Base, sqla.FsRoleMixin):
+            __tablename__ = 'role'
 
-    class User(Base, UserMixin):
-        __tablename__ = 'user'
-        id = Column(Integer, primary_key=True)
-        email = Column(String(255), unique=True)
-        username = Column(String(255), unique=True, nullable=True)
-        password = Column(String(255), nullable=False)
-        last_login_at = Column(DateTime())
-        current_login_at = Column(DateTime())
-        last_login_ip = Column(String(100))
-        current_login_ip = Column(String(100))
-        login_count = Column(Integer)
-        active = Column(Boolean())
-        fs_uniquifier = Column(String(64), unique=True, nullable=False)
-        confirmed_at = Column(DateTime())
-        roles = relationship('Role', secondary='roles_users',
-                             backref=backref('users', lazy='dynamic'))
+        class User(Base, sqla.FsUserMixin):
+            __tablename__ = 'user'
 
 You can run this either with::
 
@@ -288,16 +369,16 @@ MongoEngine Install requirements
 
     $ python3 -m venv pymyenv
     $ . pymyenv/bin/activate
-    $ pip install flask-security-too[common] mongoengine
+    $ pip install flask-security[common] mongoengine
 
 MongoEngine Application
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 The following code sample illustrates how to get started as quickly as
 possible using MongoEngine (of course you have to install and start up a
-local MongoDB instance):
+local MongoDB instance).
 
-::
+.. code-block:: python
 
     import os
 
@@ -321,8 +402,7 @@ local MongoDB instance):
 
     # Generate a nice key using secrets.token_urlsafe()
     app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY", 'pf9Wkove4IKEAXvy-cQkeDPhv9Cb3Ag-wyJILbq_dFw')
-    # Bcrypt is set as default SECURITY_PASSWORD_HASH, which requires a salt
-    # Generate a good salt using: secrets.SystemRandom().getrandbits(128)
+    # Generate a good salt for password hashing using: secrets.SystemRandom().getrandbits(128)
     app.config['SECURITY_PASSWORD_SALT'] = os.environ.get("SECURITY_PASSWORD_SALT", '146585145368132386173505678016728509634')
     # Don't worry if email has findable domain
     app.config["SECURITY_EMAIL_VALIDATOR_ARGS"] = {"check_deliverability": False}
@@ -348,7 +428,7 @@ local MongoDB instance):
 
     # Setup Flask-Security
     user_datastore = MongoEngineUserDatastore(db, User, Role)
-    app.security = Security(app, user_datastore)
+    security = Security(app, user_datastore)
 
     # Views
     @app.route("/")
@@ -365,11 +445,11 @@ local MongoDB instance):
     # one time setup
     with app.app_context():
         # Create a user and role to test with
-        app.security.datastore.find_or_create_role(
+        security.datastore.find_or_create_role(
             name="user", permissions={"user-read", "user-write"}
         )
-        if not app.security.datastore.find_user(email="test@me.com"):
-            app.security.datastore.create_user(email="test@me.com",
+        if not security.datastore.find_user(email="test@me.com"):
+            security.datastore.create_user(email="test@me.com",
             password=hash_password("password"), roles=["user"])
 
     if __name__ == '__main__':
@@ -389,15 +469,15 @@ Peewee Install requirements
 
     $ python3 -m venv pymyenv
     $ . pymyenv/bin/activate
-    $ pip install flask-security-too[common] peewee
+    $ pip install flask-security[common] peewee
 
 Peewee Application
 ~~~~~~~~~~~~~~~~~~
 
 The following code sample illustrates how to get started as quickly as
-possible using Peewee:
+possible using Peewee.
 
-::
+.. code-block:: python
 
     import os
 
@@ -413,8 +493,7 @@ possible using Peewee:
 
     # Generate a nice key using secrets.token_urlsafe()
     app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY", 'pf9Wkove4IKEAXvy-cQkeDPhv9Cb3Ag-wyJILbq_dFw')
-    # Bcrypt is set as default SECURITY_PASSWORD_HASH, which requires a salt
-    # Generate a good salt using: secrets.SystemRandom().getrandbits(128)
+    # Generate a good salt for password hashing using: secrets.SystemRandom().getrandbits(128)
     app.config['SECURITY_PASSWORD_SALT'] = os.environ.get("SECURITY_PASSWORD_SALT", '146585145368132386173505678016728509634')
 
     app.config['DATABASE'] = {
@@ -453,7 +532,7 @@ possible using Peewee:
 
     # Setup Flask-Security
     user_datastore = PeeweeUserDatastore(db, User, Role, UserRoles)
-    app.security = Security(app, user_datastore)
+    security = Security(app, user_datastore)
 
     # Views
     @app.route('/')
@@ -467,8 +546,8 @@ possible using Peewee:
         for Model in (Role, User, UserRoles):
             Model.drop_table(fail_silently=True)
             Model.create_table(fail_silently=True)
-        if not app.security.datastore.find_user(email="test@me.com"):
-            app.security.datastore.create_user(email="test@me.com", password=hash_password("password"))
+        if not security.datastore.find_user(email="test@me.com"):
+            security.datastore.create_user(email="test@me.com", password=hash_password("password"))
 
     if __name__ == '__main__':
         app.run()
@@ -547,4 +626,4 @@ You also might want to set the following configurations in your conftest.py:
     # Make this plaintext for most tests - reduces unit test time by 50%
     app.config["SECURITY_PASSWORD_HASH"] = "plaintext"
 
-.. _Flask-Security repo: https://github.com/Flask-Middleware/flask-security
+.. _Flask-Security repo: https://github.com/pallets-eco/flask-security
