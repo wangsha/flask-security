@@ -1,12 +1,12 @@
 """
-    test_datastore
-    ~~~~~~~~~~~~~~
+test_datastore
+~~~~~~~~~~~~~~
 
-    Datastore tests
+Datastore tests
 
-    :copyright: (c) 2012 by Matt Wright.
-    :copyright: (c) 2019-2024 by J. Christopher Wagner (jwag).
-    :license: MIT, see LICENSE for more details.
+:copyright: (c) 2012 by Matt Wright.
+:copyright: (c) 2019-2025 by J. Christopher Wagner (jwag).
+:license: MIT, see LICENSE for more details.
 """
 
 import pytest
@@ -18,7 +18,7 @@ from flask_security import (
     Security,
     UserMixin,
     LoginForm,
-    RegisterForm,
+    RegisterFormV2,
     naive_utcnow,
 )
 from flask_security.datastore import Datastore, UserDatastore
@@ -230,7 +230,7 @@ def test_init_app_kwargs_override_constructor_kwargs(app, datastore):
     class ConLoginForm(LoginForm):
         pass
 
-    class ConRegisterForm(RegisterForm):
+    class ConRegisterForm(RegisterFormV2):
         pass
 
     class InitLoginForm(LoginForm):
@@ -251,7 +251,7 @@ def test_create_user_with_roles_and_permissions(app, datastore):
     ds = datastore
     if not hasattr(ds.role_model, "permissions"):
         return
-    init_app_with_options(app, datastore)
+    init_app_with_options(app, ds)
 
     with app.app_context():
         role = ds.create_role(name="test1", permissions={"read"})
@@ -260,9 +260,9 @@ def test_create_user_with_roles_and_permissions(app, datastore):
         user = ds.create_user(
             email="dude@lp.com", username="dude", password="password", roles=[role]
         )
-        datastore.commit()
+        ds.commit()
 
-        user = datastore.find_user(email="dude@lp.com")
+        user = ds.find_user(email="dude@lp.com")
         assert user.has_role("test1") is True
         assert user.has_permission("read") is True
         assert user.has_permission("write") is False
@@ -474,6 +474,7 @@ def test_uuid(app, request, tmpdir, realdburl):
     def tear_down():
         with app.app_context():
             db.drop_all()
+            db.engine.dispose()
             _teardown_realdb(db_info)
 
     request.addfinalizer(tear_down)
@@ -489,7 +490,7 @@ def test_uuid(app, request, tmpdir, realdburl):
 def test_webauthn(app, datastore):
     importorskip("webauthn")
     if not datastore.webauthn_model:
-        skip("No WebAuthn model defined")
+        skip(f"No WebAuthn model defined for datastore: {datastore.__class__.__name__}")
     init_app_with_options(app, datastore)
 
     with app.app_context():
@@ -523,7 +524,7 @@ def test_webauthn(app, datastore):
 def test_webauthn_cascade(app, datastore):
     importorskip("webauthn")
     if not datastore.webauthn_model:
-        skip("No WebAuthn model defined")
+        skip(f"No WebAuthn model defined for datastore: {datastore.__class__.__name__}")
     init_app_with_options(app, datastore)
 
     with app.app_context():
@@ -652,6 +653,8 @@ def test_permissions_fsqla_v2(app):
 
         t5 = ds.find_role("test5")
         assert {"read"} == t5.get_permissions()
+    with app.app_context():
+        db.engine.dispose()
 
 
 def test_permissions_41(request, app, realdburl):
@@ -675,6 +678,7 @@ def test_permissions_41(request, app, realdburl):
         if realdburl:
             with app.app_context():
                 db.drop_all()
+                db.engine.dispose()
                 _teardown_realdb(db_info)
 
     request.addfinalizer(tear_down)
@@ -715,6 +719,8 @@ def test_permissions_41(request, app, realdburl):
     with app.app_context():
         r1 = ds.find_role("r1")
         assert r1.get_permissions() == {"read", "write"}
+    with app.app_context():
+        db.engine.dispose()
 
 
 def test_fsqlalite_table_name(app):
@@ -762,4 +768,21 @@ def test_fsqlalite_table_name(app):
         ds.commit()
         user = ds.find_user(email="me@lp.com")
         assert user
+    with app.app_context():
         Model.metadata.drop_all(db.engine)
+        db.engine.dispose()
+
+
+def test_null_fs_uniquifier(app, client):
+    # If a record has a null fs_uniquifier - we shouldn't find it.
+    # The only way this might happen is if an app upgrades from a 3.0 Flask-Security
+    # and doesn't properly update their DB.
+    ds = app.security.datastore
+    with app.test_request_context("/"):
+        user = ds.find_user(email="gal@lp.com")
+        user.fs_uniquifier = ""
+        ds.put(user)
+        ds.commit()
+
+        user = app.security.login_manager.user_callback("")
+        assert not user

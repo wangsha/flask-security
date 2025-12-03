@@ -18,10 +18,12 @@ following is a list of view templates:
 * `security/login_user.html`
 * `security/mf_recovery.html`
 * `security/mf_recovery_codes.html`
+* `security/recover_username.html`
 * `security/register_user.html`
 * `security/reset_password.html`
 * `security/change_password.html`
 * `security/change_email.html`
+* `security/change_username.html`
 * `security/send_confirmation.html`
 * `security/send_login.html`
 * `security/verify.html`
@@ -80,6 +82,7 @@ The following is a list of all the available context processor decorators:
 * ``reset_password_context_processor``: Reset password view
 * ``change_password_context_processor``: Change password view
 * ``change_email_context_processor``: Change email view
+* ``change_username_context_processor``: Change username view
 * ``send_confirmation_context_processor``: Send confirmation view
 * ``send_login_context_processor``: Send login view
 * ``mail_context_processor``: Whenever an email will be sent
@@ -101,11 +104,11 @@ replacement class. This allows you to add extra fields to any
 form or override validators. For example it is often desired to add additional
 personal information fields to the registration form::
 
-    from flask_security import RegisterForm
+    from flask_security import RegisterFormV2
     from wtforms import StringField
     from wtforms.validators import DataRequired
 
-    class ExtendedRegisterForm(RegisterForm):
+    class ExtendedRegisterForm(RegisterFormV2):
         first_name = StringField('First Name', [DataRequired()])
         last_name = StringField('Last Name', [DataRequired()])
 
@@ -141,6 +144,7 @@ careful about the order of the inherited classes::
 
     from wtforms import PasswordField, ValidationError
     from wtforms.validators import DataRequired
+    from flask_security import RegisterFormV2
 
     def password_validator(form, field):
         if field.data.startswith("PASS"):
@@ -151,21 +155,22 @@ careful about the order of the inherited classes::
                                  validators=[DataRequired(message="PASSWORD_NOT_PROVIDED"),
                                              password_validator])
 
-    class MyRegisterForm(NewPasswordFormMixinEx, ConfirmRegisterForm):
+    class MyRegisterForm(NewPasswordFormMixinEx, RegisterFormV2):
         pass
 
-    app.config["SECURITY_CONFIRM_REGISTER_FORM"] = MyRegisterForm
+    app.config["SECURITY_REGISTER_FORM"] = MyRegisterForm
 
 The following is a list of all the available form overrides:
 
-* ``login_form``: Login form
+* ``login_form``: Login form (:py:class:`flask_security.LoginForm`)
 * ``verify_form``: Verify form
-* ``confirm_register_form``: Confirmable register form
-* ``register_form``: Register form
+* ``confirm_register_form``: Confirmable register form (:py:class:`flask_security.ConfirmRegisterForm`) (deprecated)
+* ``register_form``: Register form (:py:class:`flask_security.RegisterForm` (deprecated) OR (:py:class:`flask_security.RegisterFormV2`)
 * ``forgot_password_form``: Forgot password form
 * ``reset_password_form``: Reset password form
 * ``change_password_form``: Change password form
 * ``change_email_form``: Change email form
+* ``change_username_form``: Change username form (:py:class:`flask_security.ChangeUsernameForm`)
 * ``send_confirmation_form``: Send confirmation form
 * ``mf_recovery_codes_form``: Setup recovery codes form
 * ``mf_recovery_form``: Use recovery code form
@@ -178,6 +183,7 @@ The following is a list of all the available form overrides:
 * ``us_setup_form``: Unified sign in setup form
 * ``us_setup_validate_form``: Unified sign in setup validation form
 * ``us_verify_form``: Unified sign in verify form
+* ``username_recovery_form``: Username recovery form
 * ``wan_delete_form``: WebAuthn delete a registered key form
 * ``wan_register_form``: WebAuthn initiate registration ceremony form
 * ``wan_register_response_form``: WebAuthn registration ceremony form
@@ -188,6 +194,32 @@ The following is a list of all the available form overrides:
 .. tip::
     Changing/extending the form class won't directly change how it is displayed.
     You need to ALSO provide your own template and explicitly add the new fields you want displayed.
+
+.. _register_form_migration:
+
+Register Form Migration
+++++++++++++++++++++++++
+Since early in Flask Security releases, there have been 2 different forms used for
+registration: RegisterForm and ConfirmRegisterForm. The only difference between them is
+that the ConfirmRegisterForm doesn't require password confirmation (i.e. asking the user to
+re-type their password). This wasn't a config option but rather based on whether :py:data:`SECURITY_CONFIRMABLE` was
+set or whether the request was form-based or JSON. This has always been a huge source of
+confusion. A new :py:class:`flask_security.RegisterFormV2` has been introduced that replaces both
+of the older forms. Since this is a breaking change, it is being implemented in phases.
+
+In release 5.6 the new form: RegisterFormV2 is available for use. By default the existing
+forms are used - so there are no backwards compatibility issues. However, subclassing RegisterForm or
+ConfirmRegisterForm will raise a deprecation warning. The new RegisterFormV2 can be used in one of 2 ways:
+
+    - set :py:data:`SECURITY_USE_REGISTER_V2` to ``True``
+    - subclass RegisterFormV2 and use that as the 'register_form` argument to the
+      Flask Security constructor.
+
+The new RegisterFormV2 will add a ``password_confirm`` field if :py:data:`SECURITY_PASSWORD_CONFIRM_REQUIRED`
+is set to ``True`` (the default). Additionally, JSON requests will need to provide a value for ``password_confirm``
+if configured.
+
+In release 5.7 the default is flipped - :py:data:`SECURITY_USE_REGISTER_V2` is ``True`` and RegisterFormV2 is the default form.
 
 .. _form_instantiation:
 
@@ -237,59 +269,59 @@ any more, however, Flask-Security's LoginForm uses 2 different input fields (so 
 appropriate input attributes can be set)::
 
     from flask_security import (
-            RegisterForm,
-            LoginForm,
-            Security,
-            lookup_identity,
-            uia_username_mapper,
-            unique_identity_attribute,
+        RegisterForm,
+        LoginForm,
+        Security,
+        lookup_identity,
+        uia_username_mapper,
+        unique_identity_attribute,
+    )
+    from werkzeug.local import LocalProxy
+    from wtforms import StringField, ValidationError, validators
+
+    def username_validator(form, field):
+        # Side-effect - field.data is updated to normalized value.
+        # Use proxy to we can declare this prior to initializing Security.
+        _security = LocalProxy(lambda: app.extensions["security"])
+        msg, field.data = _security.username_util.validate(field.data)
+        if msg:
+            raise ValidationError(msg)
+
+    class MyRegisterForm(RegisterForm):
+        # Note that unique_identity_attribute uses the defined field 'mapper' to
+        # normalize. We validate before that to give better error messages and
+        # to set the normalized value into the form for saving.
+        username = StringField(
+            "Username",
+            validators=[
+                validators.data_required(),
+                username_validator,
+                unique_identity_attribute,
+            ],
         )
-        from werkzeug.local import LocalProxy
-        from wtforms import StringField, ValidationError, validators
 
-        def username_validator(form, field):
-            # Side-effect - field.data is updated to normalized value.
-            # Use proxy to we can declare this prior to initializing Security.
-            _security = LocalProxy(lambda: app.extensions["security"])
-            msg, field.data = _security._username_util.validate(field.data)
-            if msg:
-                raise ValidationError(msg)
+    class MyLoginForm(LoginForm):
+        email = StringField("email", [validators.data_required()])
 
-        class MyRegisterForm(RegisterForm):
-            # Note that unique_identity_attribute uses the defined field 'mapper' to
-            # normalize. We validate before that to give better error messages and
-            # to set the normalized value into the form for saving.
-            username = StringField(
-                "Username",
-                validators=[
-                    validators.data_required(),
-                    username_validator,
-                    unique_identity_attribute,
-                ],
-            )
+        def validate(self, **kwargs):
+            self.user = lookup_identity(self.email.data)
+            # Setting 'ifield' informs the default login form validation
+            # handler that the identity has already been confirmed.
+            self.ifield = self.email
+            if not super().validate(**kwargs):
+                return False
+            return True
 
-        class MyLoginForm(LoginForm):
-            email = StringField("email", [validators.data_required()])
-
-            def validate(self, **kwargs):
-                self.user = lookup_identity(self.email.data)
-                # Setting 'ifield' informs the default login form validation
-                # handler that the identity has already been confirmed.
-                self.ifield = self.email
-                if not super().validate(**kwargs):
-                    return False
-                return True
-
-        # Allow registration with email, but login only with username
-        app.config["SECURITY_USER_IDENTITY_ATTRIBUTES"] = [
-            {"username": {"mapper": uia_username_mapper}}
-        ]
-        security = Security(
-            datastore=sqlalchemy_datastore,
-            register_form=MyRegisterForm,
-            login_form=MyLoginForm,
-        )
-        security.init_app(app)
+    # Allow registration with email, but login only with username
+    app.config["SECURITY_USER_IDENTITY_ATTRIBUTES"] = [
+        {"username": {"mapper": uia_username_mapper}}
+    ]
+    security = Security(
+        datastore=sqlalchemy_datastore,
+        register_form=MyRegisterForm,
+        login_form=MyLoginForm,
+    )
+    security.init_app(app)
 
 Localization
 ------------
@@ -366,6 +398,8 @@ The following is a list of email templates:
 * `security/email/confirmation_instructions.txt`
 * `security/email/login_instructions.html`
 * `security/email/login_instructions.txt`
+* `security/email/username_recovery.html`
+* `security/email/username_recovery.txt`
 * `security/email/reset_instructions.html`
 * `security/email/reset_instructions.txt`
 * `security/email/reset_notice.html`
@@ -374,6 +408,8 @@ The following is a list of email templates:
 * `security/email/change_notice.html`
 * `security/email/change_email_instructions.txt`
 * `security/email/change_email_instructions.html`
+* `security/email/change_username_notice.txt`
+* `security/email/change_username_notice.html`
 * `security/email/welcome.html`
 * `security/email/welcome.txt`
 * `security/email/welcome_existing.html`
@@ -393,10 +429,13 @@ Overriding these templates is simple:
 2. Create a folder named ``email`` within the ``security`` folder
 3. Create a template with the same name for the template you wish to override
 
-Each template is passed a template context object that includes values as described below.
-In addition, the ``security`` object is always passed - you can for example render
-any security configuration variable via ``security.lower_case_variable_name``
-and don't include the prefix ``security_`` (e.g. ``{{ security.confirm_url }``)}.
+Each template is passed a template context object that includes values as described in the table below.
+In addition, all templates receive:
+
+* ``security``: The Flask-Security extension object.
+* ``config``: Injected by Flask - this holds all extensions' configuration.
+  The template can retrieve any configuration variable using e.g.  ``{{ config["SECURITY_XXX"] }}``
+
 If you require more values in the
 templates, you can specify an email context processor with the
 ``mail_context_processor`` decorator. For example::
@@ -415,9 +454,9 @@ to ``False`` will bypass sending of the email (they all default to ``True``).
 In most cases, in addition to an email being sent, a :ref:`Signal <signals_topic>` is sent.
 The table below summarizes all this:
 
-=============================   ==================================   =============================================     ====================== ===============================
+=============================   ===================================  =============================================     ====================== ===============================
 **Template Name**               **Gate Config**                      **Subject Config**                                **Context Vars**       **Signal Sent**
------------------------------   ----------------------------------   ---------------------------------------------     ---------------------- -------------------------------
+-----------------------------   -----------------------------------  ---------------------------------------------     ---------------------- -------------------------------
 welcome                         SECURITY_SEND_REGISTER_EMAIL         SECURITY_EMAIL_SUBJECT_REGISTER                   - user                 user_registered
                                                                                                                        - confirmation_link
                                                                                                                        - confirmation_token
@@ -436,6 +475,8 @@ reset_instructions              SEND_PASSWORD_RESET_EMAIL            SECURITY_EM
 reset_notice                    SEND_PASSWORD_RESET_NOTICE_EMAIL     SECURITY_EMAIL_SUBJECT_PASSWORD_NOTICE            - user                 password_reset
 
 change_notice                   SEND_PASSWORD_CHANGE_EMAIL           SECURITY_EMAIL_SUBJECT_PASSWORD_CHANGE_NOTICE     - user                 password_changed
+change_username_notice          SEND_USERNAME_PASSWORD_CHANGE_EMAIL  SECURITY_EMAIL_SUBJECT_USERNAME_CHANGE_NOTICE     - user                 username_changed
+                                                                                                                       - old_username
 two_factor_instructions         N/A                                  SECURITY_EMAIL_SUBJECT_TWO_FACTOR                 - user                 tf_security_token_sent
                                                                                                                        - token
                                                                                                                        - username
@@ -446,9 +487,15 @@ us_instructions                 N/A                                  SECURITY_US
                                                                                                                        - username
 welcome_existing                SECURITY_SEND_REGISTER_EMAIL         SECURITY_EMAIL_SUBJECT_REGISTER                   - user                 user_not_registered
                                 SECURITY_RETURN_GENERIC_RESPONSES                                                      - recovery_link
+                                                                                                                       - confirmation_link
+                                                                                                                       - confirmation_token
+                                                                                                                       - reset_link
+                                                                                                                       - reset_token
 welcome_existing_username       SECURITY_SEND_REGISTER_EMAIL         SECURITY_EMAIL_SUBJECT_REGISTER                   - email                user_not_registered
                                 SECURITY_RETURN_GENERIC_RESPONSES                                                      - username
-=============================   ==================================   =============================================     ====================== ===============================
+username_recovery               SECURITY_USERNAME_RECOVERY           SECURITY_EMAIL_SUBJECT_USERNAME_RECOVERY          - user                 username_recovery_email_sent
+                                                                                                                       - username
+=============================   ===================================  =============================================     ====================== ===============================
 
 When sending an email, Flask-Security goes through the following steps:
 
@@ -551,7 +598,8 @@ tandem with Flask-Login, behaves as follows:
       ``Basic realm="xxxx"``. The realm name is defined by :py:data:`SECURITY_DEFAULT_HTTP_AUTH_REALM`.
 
     * If authorization fails as the result of `@roles_required`, `@roles_accepted`,
-      `@permissions_required`, or `@permissions_accepted`, then if the request 'wants' a JSON
+      `@permissions_required`, or `@permissions_accepted`, then :meth:`.Security.unauthz_handler` is called.
+      The default implementation flow is: if the request 'wants' a JSON
       response, :meth:`.Security.render_json` is called with a 403 status code. If not,
       then if :py:data:`SECURITY_UNAUTHORIZED_VIEW` is defined, the response will redirected.
       If :py:data:`SECURITY_UNAUTHORIZED_VIEW` is not defined, then ``abort(403)`` is called.

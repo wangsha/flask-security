@@ -1,12 +1,12 @@
 """
-    test_misc
-    ~~~~~~~~~~~
+test_misc
+~~~~~~~~~~~
 
-    Lots of tests
+Lots of tests
 
-    :copyright: (c) 2012 by Matt Wright.
-    :copyright: (c) 2019-2024 by J. Christopher Wagner (jwag).
-    :license: MIT, see LICENSE for more details.
+:copyright: (c) 2012 by Matt Wright.
+:copyright: (c) 2019-2025 by J. Christopher Wagner (jwag).
+:license: MIT, see LICENSE for more details.
 """
 
 from datetime import timedelta
@@ -34,6 +34,8 @@ from tests.test_utils import (
     logout,
     populate_data,
     reset_fresh,
+    get_form_input,
+    is_authenticated,
 )
 from tests.test_webauthn import HackWebauthnUtil, reg_2_keys
 
@@ -49,7 +51,8 @@ from flask_security.forms import (
     PasswordField,
     PasswordlessLoginForm,
     RegisterForm,
-    Required,
+    RegisterFormV2,
+    RequiredLocalize,
     ResetPasswordForm,
     SendConfirmationForm,
     StringField,
@@ -115,6 +118,9 @@ def test_register_blueprint_flag(app, sqlalchemy_datastore):
         {"username": {"mapper": lambda x: x}},
     ]
 )
+@pytest.mark.filterwarnings(
+    "ignore:.*The RegisterForm is deprecated.*:DeprecationWarning"
+)
 def test_basic_custom_forms(app, sqlalchemy_datastore):
     class MyLoginForm(LoginForm):
         username = StringField("My Login Username Field")
@@ -171,10 +177,9 @@ def test_basic_custom_forms(app, sqlalchemy_datastore):
 
 @pytest.mark.registerable()
 @pytest.mark.confirmable()
+@pytest.mark.settings(use_register_v2=False)
+@pytest.mark.filterwarnings("ignore:.*The ConfirmRegisterForm.*:DeprecationWarning")
 def test_confirmable_custom_form(app, sqlalchemy_datastore):
-    app.config["SECURITY_REGISTERABLE"] = True
-    app.config["SECURITY_CONFIRMABLE"] = True
-
     class MyRegisterForm(ConfirmRegisterForm):
         email = EmailField("My Register Email Address Field")
 
@@ -360,7 +365,7 @@ def test_custom_forms_via_config(app, sqlalchemy_datastore):
     class MyLoginForm(LoginForm):
         email = StringField("My Login Email Address Field")
 
-    class MyRegisterForm(RegisterForm):
+    class MyRegisterForm(RegisterFormV2):
         email = StringField("My Register Email Address Field")
 
     app.config["SECURITY_LOGIN_FORM"] = MyLoginForm
@@ -370,7 +375,6 @@ def test_custom_forms_via_config(app, sqlalchemy_datastore):
     security.init_app(app)
 
     client = app.test_client()
-
     response = client.get("/login")
     assert b"My Login Email Address Field" in response.data
 
@@ -401,6 +405,7 @@ def test_custom_form_instantiator(app, client, get_message):
         def validate(self, **kwargs: t.Any) -> bool:
             if not super().validate(**kwargs):  # pragma: no cover
                 return False
+            assert isinstance(self.email.errors, list)
             if not self.myservice(self.email.data):
                 self.email.errors.append("Not happening")
                 return False
@@ -439,6 +444,7 @@ def test_custom_form_instantiator2(app, client, get_message):
         def validate(self, **kwargs: t.Any) -> bool:
             if not super().validate(**kwargs):  # pragma: no cover
                 return False
+            assert isinstance(self.email.errors, list)
             if not self.myservice(self.email.data):
                 self.email.errors.append("Not happening")
                 return False
@@ -483,7 +489,7 @@ def test_custom_form_setting(app, sqlalchemy_datastore):
 
 def test_form_required(app, sqlalchemy_datastore):
     class MyLoginForm(LoginForm):
-        myfield = StringField("My Custom Field", validators=[Required()])
+        myfield = StringField("My Custom Field", validators=[RequiredLocalize()])
 
     app.config["SECURITY_LOGIN_FORM"] = MyLoginForm
 
@@ -503,7 +509,9 @@ def test_form_required_local_message(app, sqlalchemy_datastore):
     msg = "hi! did you forget me?"
 
     class MyLoginForm(LoginForm):
-        myfield = StringField("My Custom Field", validators=[Required(message=msg)])
+        myfield = StringField(
+            "My Custom Field", validators=[RequiredLocalize(message=msg)]
+        )
 
     app.config["SECURITY_LOGIN_FORM"] = MyLoginForm
 
@@ -528,7 +536,7 @@ def test_without_babel(app, client):
     assert response.status_code == 200
 
 
-def test_no_email_sender(app, sqlalchemy_datastore):
+def test_no_email_sender(app, sqlalchemy_datastore, outbox):
     """Verify that if SECURITY_EMAIL_SENDER is default
     (which is a local proxy) that send_mail picks up MAIL_DEFAULT_SENDER.
     """
@@ -544,12 +552,11 @@ def test_no_email_sender(app, sqlalchemy_datastore):
     with app.app_context():
         user = TestUser("matt@lp.com")
         send_mail("Test Default Sender", user.email, "welcome", user=user)
-        outbox = app.mail.outbox
         assert 1 == len(outbox)
-        assert "test@testme.com" == outbox[0].from_email
+        assert "test@testme.com" == outbox[0].sender
 
 
-def test_sender_tuple(app, sqlalchemy_datastore):
+def test_sender_tuple(app, sqlalchemy_datastore, outbox):
     """Verify that if sender is a (name, address) tuple,
     in the received email sender is properly formatted as "name <address>"
     Flask-Mail takes tuples - Flask-Mailman takes them - however the
@@ -567,12 +574,11 @@ def test_sender_tuple(app, sqlalchemy_datastore):
     with app.app_context():
         user = TestUser("matt@lp.com")
         send_mail("Test Tuple Sender", user.email, "welcome", user=user)
-        outbox = app.mail.outbox
         assert 1 == len(outbox)
-        assert outbox[0].from_email == "Test User <test@testme.com>"
+        assert outbox[0].sender == "Test User <test@testme.com>"
 
 
-def test_send_mail_context(app, sqlalchemy_datastore):
+def test_send_mail_context(app, sqlalchemy_datastore, outbox):
     """Test full context sent to MailUtil/send_mail"""
     app.config["MAIL_DEFAULT_SENDER"] = "test@testme.com"
     app.security = Security()
@@ -589,9 +595,8 @@ def test_send_mail_context(app, sqlalchemy_datastore):
     with app.app_context():
         user = TestUser("matt@lp.com")
         send_mail("Test Default Sender", user.email, "welcome", user=user)
-        outbox = app.mail.outbox
         assert 1 == len(outbox)
-        assert "test@testme.com" == outbox[0].from_email
+        assert "test@testme.com" == outbox[0].sender
         matcher = re.match(
             r".*ExtraContext:(\S+).*", outbox[0].body, re.IGNORECASE | re.DOTALL
         )
@@ -758,7 +763,7 @@ def test_per_request_xlate(app, client):
     response = client.get("/change", follow_redirects=True)
     assert response.status_code == 200
     assert b"Nouveau mot de passe" in response.data
-    assert b"<h1>Changer de mot de passe</h1>" in response.data
+    assert b"<h1>Changer le mot de passe</h1>" in response.data
 
     # try JSON
     response = client.post(
@@ -786,7 +791,7 @@ def test_zxcvbn_xlate(app):
 
     with app.test_request_context():
         user = TestUser("jwag@notme.com")
-        pbad, pnorm = app.security._password_util.validate("simple", False, user=user)
+        pbad, pnorm = app.security.password_util.validate("simple", False, user=user)
         print(pbad)
 """
 
@@ -809,7 +814,7 @@ B3902FD808DCA504AAAD30F3C14BD3ACE7C:10"
             mock_urlopen.return_value.__enter__.return_value.read.return_value = (
                 pwned_response
             )
-            pbad, pnorm = app.security._password_util.validate("flaskflask", False)
+            pbad, pnorm = app.security.password_util.validate("flaskflask", False)
             assert len(pbad) == 1
             assert app.config["SECURITY_MSG_PASSWORD_BREACHED"][0] in pbad[0]
 
@@ -836,7 +841,7 @@ B3902FD808DCA504AAAD30F3C14BD3ACE7C:10"
             mock_urlopen.return_value.__enter__.return_value.read.return_value = (
                 pwned_response
             )
-            pbad, pnorm = app.security._password_util.validate("flaskflask", True)
+            pbad, pnorm = app.security.password_util.validate("flaskflask", True)
             # Still weak password, just not pwned enough. Should fail complexity
             assert len(pbad) == 1
             assert "Repeats like" in pbad[0]
@@ -850,7 +855,7 @@ def test_breached_real(app, sqlalchemy_datastore):
     app.security = Security()
     app.security.init_app(app, sqlalchemy_datastore)
     with app.test_request_context():
-        pbad, pnorm = app.security._password_util.validate("flaskflask", True)
+        pbad, pnorm = app.security.password_util.validate("flaskflask", True)
         assert len(pbad) == 1
         assert app.config["SECURITY_MSG_PASSWORD_BREACHED"][0] in pbad[0]
 
@@ -934,14 +939,6 @@ def test_phone_util_override(app, sqlalchemy_datastore):
 
     app.security = Security(phone_util_cls=MyPhoneUtil)
     app.security.init_app(app, sqlalchemy_datastore)
-
-    with app.app_context():
-        assert uia_phone_mapper("55") == "very-canonical"
-
-    # try init_app kwargs
-    app.config["SECURITY_BLUEPRINT_NAME"] = "security2"
-    app.security2 = Security()
-    app.security2.init_app(app, sqlalchemy_datastore, phone_util_cls=MyPhoneUtil)
 
     with app.app_context():
         assert uia_phone_mapper("55") == "very-canonical"
@@ -1141,7 +1138,7 @@ def test_verify_fresh(app, client, get_message):
 
     with capture_flashes() as flashes:
         response = client.get("/fresh", follow_redirects=True)
-        assert b"Please Reauthenticate" in response.data
+        assert b"Reauthenticate" in response.data
     assert flashes[0]["category"] == "error"
     assert flashes[0]["message"].encode("utf-8") == get_message(
         "REAUTHENTICATION_REQUIRED"
@@ -1154,12 +1151,12 @@ def test_verify_fresh(app, client, get_message):
 
     reset_fresh(client, app.config["SECURITY_FRESHNESS"])
     response = client.get(verify_url)
-    assert b"Please Reauthenticate" in response.data
+    assert b"Reauthenticate" in response.data
 
     response = client.post(
         verify_url, data=dict(password="not my password"), follow_redirects=False
     )
-    assert b"Please Reauthenticate" in response.data
+    assert b"Reauthenticate" in response.data
 
     response = client.post(
         verify_url, data=dict(password="password"), follow_redirects=False
@@ -1182,7 +1179,7 @@ def test_verify_fresh_json(app, client, get_message):
     assert response.json["response"]["reauth_required"]
 
     response = client.get("/verify")
-    assert b"Please Reauthenticate" in response.data
+    assert b"Reauthenticate" in response.data
 
     response = client.post(
         "/verify", json=dict(password="not my password"), headers=headers
@@ -1241,8 +1238,7 @@ def test_verify_next(app, client, get_message):
     assert response.location == "http://localhost/mynext"
 
 
-@pytest.mark.webauthn()
-@pytest.mark.settings(webauthn_util_cls=HackWebauthnUtil)
+@pytest.mark.webauthn(webauthn_util_cls=HackWebauthnUtil)
 def test_verify_wan(app, client, get_message):
     # test get correct options when requiring a reauthentication and have wan keys
     # setup.
@@ -1552,3 +1548,53 @@ def test_secret_key_fallbacks(app, verify_secret_key, verify_fallbacks, should_p
     else:
         with pytest.raises(BadTimeSignature):
             serializer.loads(token)
+
+
+@pytest.mark.settings(username_enable=True)
+def test_custom_login_form(app, sqlalchemy_datastore, get_message):
+    # Test custom login form that deletes email and uses username only
+    # Also test that if app leave 'email' in as a user identity attribute we
+    # will ignore it
+    class MyLoginForm(LoginForm):
+        email = None
+
+    app.security = Security(
+        app,
+        datastore=sqlalchemy_datastore,
+        login_form=MyLoginForm,
+    )
+
+    populate_data(app)
+    client = app.test_client()
+
+    response = client.get("/login", follow_redirects=False)
+    assert not get_form_input(response, "email")
+
+    response = client.post(
+        "/login", json=dict(email="jill@lp.com", password="password")
+    )
+    assert response.status_code == 400
+    assert (
+        get_message("USER_DOES_NOT_EXIST")
+        == response.json["response"]["field_errors"][""][0].encode()
+    )
+
+    response = client.post("/login", json=dict(username="jill", password="password"))
+    assert response.status_code == 200
+
+
+@pytest.mark.settings(password_required=False)
+def test_password_required_setting(app, sqlalchemy_datastore):
+    with pytest.raises(ValueError) as vex:
+        Security(app=app, datastore=sqlalchemy_datastore)
+    assert "SECURITY_PASSWORD_REQUIRED can only be" in str(vex.value)
+
+
+def test_null_user_id(app, client, get_message):
+    # if DB not configured correctly - make sure we catch null fs_uniquifier
+    json_authenticate(client)
+    assert is_authenticated(client, get_message)
+    with client.session_transaction() as sess:
+        sess["_user_id"] = ""
+        sess["user_id"] = ""
+    assert not is_authenticated(client, get_message)

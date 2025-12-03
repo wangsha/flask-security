@@ -1,11 +1,11 @@
 """
-    flask_security.two_factor
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+flask_security.two_factor
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    Flask-Security two_factor module
+Flask-Security two_factor module
 
-    :copyright: (c) 2016 by Gal Stainfeld, at Emedgene
-    :copyright: (c) 2019-2024 by J. Christopher Wagner (jwag).
+:copyright: (c) 2016 by Gal Stainfeld, at Emedgene
+:copyright: (c) 2019-2025 by J. Christopher Wagner (jwag).
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import typing as t
 from flask import current_app, redirect, request, session
 
 from .forms import (
+    _setup_methods_xlate,
     get_form_field_xlate,
     DummyForm,
     TwoFactorRescueForm,
@@ -27,6 +28,8 @@ from .utils import (
     base_render_json,
     config_value as cv,
     do_flash,
+    get_message,
+    localize_callback,
     json_error_response,
     send_mail,
     url_for_security,
@@ -59,7 +62,7 @@ def tf_send_security_token(user, method, totp_secret, phone_number):
     Flask-Security code should NOT call this directly -
     call :meth:`.UserMixin.tf_send_security_token`
     """
-    token_to_be_sent = _security._totp_factory.generate_totp_password(totp_secret)
+    token_to_be_sent = _security.totp_factory.generate_totp_password(totp_secret)
     if method == "email" or method == "mail":
         send_mail(
             cv("EMAIL_SUBJECT_TWO_FACTOR"),
@@ -70,11 +73,11 @@ def tf_send_security_token(user, method, totp_secret, phone_number):
             username=user.calc_username(),
         )
     elif method == "sms":
-        msg = f"Use this code to log in: {token_to_be_sent}"
+        m, c = get_message("USE_CODE", code=token_to_be_sent)
         from_number = cv("SMS_SERVICE_CONFIG")["PHONE_NUMBER"]
         to_number = phone_number
         sms_sender = SmsSenderFactory.createSender(cv("SMS_SERVICE"))
-        sms_sender.send_sms(from_number=from_number, to_number=to_number, msg=msg)
+        sms_sender.send_sms(from_number=from_number, to_number=to_number, msg=m)
 
     else:
         # password are generated automatically in the authenticator apps or not needed
@@ -131,6 +134,7 @@ def set_rescue_options(form: TwoFactorRescueForm, user: UserMixin) -> dict[str, 
 
     if cv("TWO_FACTOR_RESCUE_EMAIL"):
         recovery_options["email"] = url_for_security("two_factor_rescue")
+        assert isinstance(form.help_setup.choices, list)
         form.help_setup.choices.append(
             ("email", get_form_field_xlate(_("Send code via email")))
         )
@@ -141,6 +145,7 @@ def set_rescue_options(form: TwoFactorRescueForm, user: UserMixin) -> dict[str, 
         and _datastore.mf_get_recovery_codes(user)
     ):
         recovery_options["recovery_code"] = url_for_security("mf_recovery")
+        assert isinstance(form.help_setup.choices, list)
         form.help_setup.choices.append(
             (
                 "recovery_code",
@@ -175,10 +180,15 @@ class CodeTfPlugin(TfPluginBase):
     ) -> None:
         pass
 
-    def get_setup_methods(self, user: UserMixin) -> list[str]:
+    def get_setup_methods(self, user: UserMixin) -> list[tuple[str, str]]:
         if is_tf_setup(user):
             assert user.tf_primary_method is not None
-            return [user.tf_primary_method]
+            return [
+                (
+                    user.tf_primary_method,
+                    localize_callback(_setup_methods_xlate[user.tf_primary_method]),
+                )
+            ]
         return []
 
     def tf_login(

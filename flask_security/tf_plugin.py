@@ -1,14 +1,14 @@
 """
-    flask_security.tf_plugin
-    ~~~~~~~~~~~~~~~~~~~~~~~~
+flask_security.tf_plugin
+~~~~~~~~~~~~~~~~~~~~~~~~
 
-    Flask-Security Two-Factor Plugin Module
+Flask-Security Two-Factor Plugin Module
 
-    :copyright: (c) 2022-2024 by J. Christopher Wagner (jwag).
-    :license: MIT, see LICENSE for more details.
+:copyright: (c) 2022-2024 by J. Christopher Wagner (jwag).
+:license: MIT, see LICENSE for more details.
 
-    TODO:
-        - add localized callback for select choices.
+TODO:
+    - add localized callback for select choices.
 """
 
 from __future__ import annotations
@@ -77,7 +77,7 @@ def tf_select() -> ResponseValue:
         return tf_illegal_state(form, cv("TWO_FACTOR_ERROR_VIEW"))
 
     setup_methods = _security.two_factor_plugins.get_setup_tf_methods(user)
-    form.which.choices = setup_methods
+    form.which.choices = setup_methods  # type: ignore[assignment]
 
     if form.validate_on_submit():
         response = None
@@ -96,7 +96,7 @@ def tf_select() -> ResponseValue:
         return response
 
     if _security._want_json(request):
-        payload = {"tf_select": True, "tf_setup_methods": setup_methods}
+        payload = {"tf_select": True, "tf_setup_methods": [k for k, v in setup_methods]}
         return base_render_json(form, include_user=False, additional=payload)
 
     return _security.render_template(
@@ -115,9 +115,9 @@ class TfPluginBase:  # pragma no cover
     ) -> None:
         raise NotImplementedError
 
-    def get_setup_methods(self, user: UserMixin) -> list[str]:
-        """
-        Return a list of methods that ``user`` has setup for this second factor
+    def get_setup_methods(self, user: UserMixin) -> list[tuple[str, str]]:
+        """Return a list of tuples representing currently configured methods.
+        The tuple is (value, label) - suitable for use in a FlaskForm Select element.
         """
         raise NotImplementedError
 
@@ -174,12 +174,14 @@ class TfPlugin:
         # There is a small window that a previously setup method was removed.
         for impl in self._tf_impls.values():
             setup_methods = impl.get_setup_methods(user)
-            if method in setup_methods:
+            if method in [k for k, v in setup_methods]:
                 return impl
         return None  # pragma no cover
 
-    def get_setup_tf_methods(self, user: UserMixin) -> list[str]:
-        # Return list of methods that user has setup
+    def get_setup_tf_methods(self, user: UserMixin) -> list[tuple[str, str]]:
+        """Return a list of tuples representing currently configured methods.
+        The tuple is (value, label) - suitable for use in a FlaskForm Select element.
+        """
         methods = []
         for impl in self._tf_impls.values():
             methods.extend(impl.get_setup_methods(user))
@@ -200,7 +202,7 @@ class TfPlugin:
         """
         json_payload: dict[str, t.Any]
         if _security.support_mfa:
-            tf_setup_methods = self.get_setup_tf_methods(user)
+            tf_setup_methods = [k for k, v in self.get_setup_tf_methods(user)]
             if cv("TWO_FACTOR_REQUIRED") or len(tf_setup_methods) > 0:
                 tf_fresh = tf_verify_validity_token(user.fs_uniquifier)
                 if cv("TWO_FACTOR_ALWAYS_VALIDATE") or not tf_fresh:

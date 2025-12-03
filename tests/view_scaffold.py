@@ -1,4 +1,4 @@
-# :copyright: (c) 2019-2024 by J. Christopher Wagner (jwag).
+# :copyright: (c) 2019-2025 by J. Christopher Wagner (jwag).
 # :license: MIT, see LICENSE for more details.
 
 """
@@ -22,11 +22,14 @@ data and a mail sender that flashes what mail would be sent!
 """
 from __future__ import annotations
 
+import base64
+import secrets
 from datetime import timedelta
 import os
 import typing as t
+import webbrowser
 
-from flask import Flask, flash, render_template_string, request, session
+from flask import Flask, flash, render_template_string, request, session, g
 from flask_wtf import CSRFProtect
 
 from flask_security import (
@@ -75,6 +78,10 @@ class FlashMailUtil(MailUtil):
         **kwargs: t.Any,
     ) -> None:
         flash(f"Email body: {body}")
+        if html:
+            hb = html.encode()
+            url = "data:text/html;base64," + base64.b64encode(hb).decode()
+            webbrowser.open(url, new=1)
 
 
 SET_LANG = False
@@ -174,9 +181,24 @@ def create_app() -> Flask:
     # app.config["SECURITY_US_SIGNIN_REPLACES_LOGIN"] = True
     # app.config["SECURITY_WAN_ALLOW_USER_HINTS"] = False
 
+    # Setup script nonces and test with nonce-based content-security policy
+    app.config["SECURITY_SCRIPT_NONCE_KEY"] = "csp_nonce"
+
+    @app.before_request
+    def set_nonce():
+        g.csp_nonce = secrets.token_urlsafe(16)
+
+    @app.after_request
+    def inject_csp_header(response):
+        response.headers["Content-Security-Policy"] = (
+            f"script-src 'nonce-{g.csp_nonce}'"
+        )
+        return response
+
     app.config["SECURITY_TOTP_SECRETS"] = {
         "1": "TjQ9Qa31VOrfEzuPy4VHQWPCTmRzCnFzMKLxXYiZu9B"
     }
+    app.config["SECURITY_TOTP_ISSUER"] = "me"
     app.config["SECURITY_FRESHNESS"] = timedelta(minutes=10)
     app.config["SECURITY_FRESHNESS_GRACE_PERIOD"] = timedelta(minutes=20)
     app.config["SECURITY_USERNAME_ENABLE"] = True
@@ -206,12 +228,14 @@ def create_app() -> Flask:
     for opt in [
         "changeable",
         "change_email",
+        "change_username",
         "recoverable",
         "registerable",
         "trackable",
         "NOTpasswordless",
         "confirmable",
         "two_factor",
+        "username_recovery",
         "unified_signin",
         "webauthn",
         "multi_factor_recovery_codes",
@@ -247,6 +271,8 @@ def create_app() -> Flask:
     def get_locale():
         # For a given session - set lang based on first request.
         # Honor explicit url request first
+        if not session:  # if running CLI
+            return
         global SET_LANG
         if not SET_LANG:
             session.pop("lang", None)

@@ -55,7 +55,7 @@ maintenance of related projects. If you are interested in helping maintain
 this project, please reach out on `the Pallets Discord server <https://discord.gg/pallets>`.
 
 Goals
-+++++
+-----
 
 * Use `OWASP <https://github.com/OWASP/ASVS>`_ to guide best practice and default configurations.
 * Be more opinionated and 'batteries' included by reducing reliance on abandoned projects and
@@ -64,16 +64,17 @@ Goals
   standards and any other guidelines for extensions that they come up with.
 * Continue to add newer authentication/authorization standards:
     * 'Social Auth' integrated (using authlib) (5.1)
-    * WebAuthn support (5.0)
+    * WebAuthn/Passkey support (5.0)
     * Two-Factor recovery codes (5.0)
     * First-class support for username as identity (4.1)
     * Support for freshness decorator to ensure sensitive operations have new authentication (4.0)
     * Support for email normalization and validation (4.0)
     * Unified signin (username, phone, passwordless) feature (3.4)
+    * Two/Multi-Factor authentication supporting SMS, email, authenticator apps (4.0)
 
 
 Contributing
-++++++++++++
+------------
 Issues and pull requests are welcome. Other maintainers are also welcome.
 Please consult these `contributing`_ guidelines.
 

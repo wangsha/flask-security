@@ -1,11 +1,11 @@
 """
-    test_changeable
-    ~~~~~~~~~~~~~~~
+test_changeable
+~~~~~~~~~~~~~~~
 
-    Changeable tests
+Changeable tests
 
-    :copyright: (c) 2019-2024 by J. Christopher Wagner (jwag).
-    :license: MIT, see LICENSE for more details.
+:copyright: (c) 2019-2025 by J. Christopher Wagner (jwag).
+:license: MIT, see LICENSE for more details.
 """
 
 import base64
@@ -21,7 +21,7 @@ from tests.test_utils import (
     authenticate,
     check_location,
     check_xlation,
-    get_form_input,
+    get_form_input_value,
     get_session,
     hash_password,
     init_app_with_options,
@@ -32,8 +32,8 @@ from tests.test_utils import (
 pytestmark = pytest.mark.changeable()
 
 
-def test_changeable_flag(app, clients, get_message):
-    client = clients
+def test_changeable_flag(app, clients, get_message, outbox):
+    tcl = clients
     recorded = []
 
     @password_changed.connect_via(app)
@@ -42,14 +42,14 @@ def test_changeable_flag(app, clients, get_message):
         assert isinstance(user, UserMixin)
         recorded.append(user)
 
-    authenticate(client)
+    authenticate(tcl)
 
     # Test change view
-    response = client.get("/change", follow_redirects=True)
-    assert b"Change password" in response.data
+    response = tcl.get("/change", follow_redirects=True)
+    assert b"Change Password" in response.data
 
     # Test wrong original password
-    response = client.post(
+    response = tcl.post(
         "/change",
         data={
             "password": "notpassword",
@@ -61,7 +61,7 @@ def test_changeable_flag(app, clients, get_message):
     assert get_message("INVALID_PASSWORD") in response.data
 
     # Test mismatch
-    response = client.post(
+    response = tcl.post(
         "/change",
         data={
             "password": "password",
@@ -73,13 +73,13 @@ def test_changeable_flag(app, clients, get_message):
     assert get_message("RETYPE_PASSWORD_MISMATCH") in response.data
 
     # Test missing password
-    response = client.post(
+    response = tcl.post(
         "/change",
         data={"password": "   ", "new_password": "", "new_password_confirm": ""},
         follow_redirects=True,
     )
     assert get_message("PASSWORD_NOT_PROVIDED") in response.data
-    response = client.post(
+    response = tcl.post(
         "/change",
         data={
             "password": "   ",
@@ -91,7 +91,7 @@ def test_changeable_flag(app, clients, get_message):
     assert get_message("PASSWORD_NOT_PROVIDED") in response.data
 
     # Test bad password
-    response = client.post(
+    response = tcl.post(
         "/change",
         data={"password": "password", "new_password": "a", "new_password_confirm": "a"},
         follow_redirects=True,
@@ -99,7 +99,7 @@ def test_changeable_flag(app, clients, get_message):
     assert get_message("PASSWORD_INVALID_LENGTH", length=8) in response.data
 
     # Test same as previous
-    response = client.post(
+    response = tcl.post(
         "/change",
         data={
             "password": "password",
@@ -111,7 +111,7 @@ def test_changeable_flag(app, clients, get_message):
     assert get_message("PASSWORD_IS_THE_SAME") in response.data
 
     # Test successful submit sends email notification
-    response = client.post(
+    response = tcl.post(
         "/change",
         data={
             "password": "password",
@@ -120,7 +120,6 @@ def test_changeable_flag(app, clients, get_message):
         },
         follow_redirects=True,
     )
-    outbox = app.mail.outbox
 
     assert get_message("PASSWORD_CHANGE") in response.data
     assert b"Home Page" in response.data
@@ -129,7 +128,7 @@ def test_changeable_flag(app, clients, get_message):
     assert "Your password has been changed" in outbox[0].body
 
     # Test leading & trailing whitespace not stripped
-    response = client.post(
+    response = tcl.post(
         "/change",
         data={
             "password": "new strong password",
@@ -146,7 +145,7 @@ def test_changeable_flag(app, clients, get_message):
         '"new_password": "new stronger password2", '
         '"new_password_confirm": "new stronger password2"}'
     )
-    response = client.post(
+    response = tcl.post(
         "/change", data=data, headers={"Content-Type": "application/json"}
     )
     assert response.status_code == 200
@@ -154,7 +153,7 @@ def test_changeable_flag(app, clients, get_message):
 
     # Test JSON errors
     data = '{"password": "newpassword"}'
-    response = client.post(
+    response = tcl.post(
         "/change", data=data, headers={"Content-Type": "application/json"}
     )
     assert response.status_code == 400
@@ -291,36 +290,39 @@ def test_auth_uniquifier(app):
         )
         ds.commit()
 
-        client = app.test_client()
+    client = app.test_client()
 
-        # standard login with auth token
-        response = json_authenticate(client)
-        token = response.json["response"]["user"]["authentication_token"]
-        headers = {"Authentication-Token": token}
-        # make sure can access restricted page
-        response = client.get("/token", headers=headers)
-        assert b"Token Authentication" in response.data
+    # standard login with auth token
+    response = json_authenticate(client)
+    token = response.json["response"]["user"]["authentication_token"]
+    headers = {"Authentication-Token": token}
+    # make sure can access restricted page
+    response = client.get("/token", headers=headers)
+    assert b"Token Authentication" in response.data
 
-        # change password
-        response = client.post(
-            "/change",
-            data={
-                "password": "password",
-                "new_password": "new strong password",
-                "new_password_confirm": "new strong password",
-            },
-            follow_redirects=True,
-        )
-        assert response.status_code == 200
+    # change password
+    response = client.post(
+        "/change",
+        data={
+            "password": "password",
+            "new_password": "new strong password",
+            "new_password_confirm": "new strong password",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
 
-        # authtoken should still be valid
-        response = client.get("/token", headers=headers)
-        assert response.status_code == 200
+    # authtoken should still be valid
+    response = client.get("/token", headers=headers)
+    assert response.status_code == 200
+
+    with app.app_context():
+        db.engine.dispose()
 
 
 @pytest.mark.app_settings(babel_default_locale="fr_FR")
 @pytest.mark.babel()
-def test_xlation(app, client, get_message_local):
+def test_xlation(app, client, get_message_local, outbox):
     # Test form and email translation
     assert check_xlation(app, "fr_FR"), "You must run python setup.py compile_catalog"
 
@@ -330,7 +332,7 @@ def test_xlation(app, client, get_message_local):
     with app.test_request_context():
         # Check header
         assert (
-            f'<h1>{localize_callback("Change password")}</h1>'.encode() in response.data
+            f'<h1>{localize_callback("Change Password")}</h1>'.encode() in response.data
         )
         submit = localize_callback(_default_field_labels["change_password"])
         assert f'value="{submit}"'.encode() in response.data
@@ -344,7 +346,6 @@ def test_xlation(app, client, get_message_local):
         },
         follow_redirects=True,
     )
-    outbox = app.mail.outbox
 
     with app.test_request_context():
         assert get_message_local("PASSWORD_CHANGE").encode("utf-8") in response.data
@@ -358,7 +359,7 @@ def test_xlation(app, client, get_message_local):
         )
         assert (
             str(markupsafe.escape(localize_callback("Your password has been changed.")))
-            in outbox[0].alternatives[0][0]
+            in outbox[0].alts["html"]
         )
         assert localize_callback("Your password has been changed") in outbox[0].body
 
@@ -378,7 +379,7 @@ def test_custom_change_template(client):
 
 
 @pytest.mark.settings(send_password_change_email=False)
-def test_disable_change_emails(app, client):
+def test_disable_change_emails(app, client, outbox):
     client.post(
         "/change",
         data={
@@ -388,7 +389,7 @@ def test_disable_change_emails(app, client):
         },
         follow_redirects=True,
     )
-    assert not app.mail.outbox
+    assert len(outbox) == 0
 
 
 @pytest.mark.settings(post_change_view="/profile")
@@ -685,7 +686,7 @@ def test_csrf(app, client):
     assert b"The CSRF token is missing" in response.data
     # Note that we get a CSRF token EVEN for errors - this seems odd
     # but can't find anything that says its a security issue
-    csrf_token = get_form_input(response, "csrf_token")
+    csrf_token = get_form_input_value(response, "csrf_token")
 
     data["csrf_token"] = csrf_token
     response = client.post("/change", data=data)

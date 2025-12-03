@@ -1,14 +1,14 @@
 """
-    flask_security.core
-    ~~~~~~~~~~~~~~~~~~~
+flask_security.core
+~~~~~~~~~~~~~~~~~~~
 
-    Flask-Security core module
+Flask-Security core module
 
-    :copyright: (c) 2012 by Matt Wright.
-    :copyright: (c) 2017 by CERN.
-    :copyright: (c) 2017 by ETH Zurich, Swiss Data Science Center.
-    :copyright: (c) 2019-2024 by J. Christopher Wagner (jwag).
-    :license: MIT, see LICENSE for more details.
+:copyright: (c) 2012 by Matt Wright.
+:copyright: (c) 2017 by CERN.
+:copyright: (c) 2017 by ETH Zurich, Swiss Data Science Center.
+:copyright: (c) 2019-2025 by J. Christopher Wagner (jwag).
+:license: MIT, see LICENSE for more details.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ from werkzeug.local import LocalProxy
 
 from .babel import FsDomain
 from .change_email import ChangeEmailForm
+from .change_username import ChangeUsernameForm
 from .decorators import (
     default_reauthn_handler,
     default_unauthn_handler,
@@ -46,14 +47,17 @@ from .forms import (
     PasswordlessLoginForm,
     RegisterForm,
     RegisterFormMixin,
+    RegisterFormV2,
     ResetPasswordForm,
     SendConfirmationForm,
     TwoFactorVerifyCodeForm,
     TwoFactorSetupForm,
     TwoFactorRescueForm,
+    UsernameRecoveryForm,
     VerifyForm,
-    get_register_username_field,
-    login_username_field,
+    build_username_field,
+    build_register_form,
+    build_login_form,
 )
 from .json import setup_json
 from .mail_util import MailUtil
@@ -133,6 +137,7 @@ _default_config: dict[str, t.Any] = {
     "SUBDOMAIN": None,
     "FLASH_MESSAGES": True,
     "RETURN_GENERIC_RESPONSES": False,
+    "USE_REGISTER_V2": True,
     "I18N_DOMAIN": "flask_security",
     "I18N_DIRNAME": "builtin",
     "EMAIL_VALIDATOR_ARGS": None,
@@ -170,6 +175,7 @@ _default_config: dict[str, t.Any] = {
     "PASSWORD_BREACHED_COUNT": 1,
     "PASSWORD_NORMALIZE_FORM": "NFKD",
     "PASSWORD_REQUIRED": True,
+    "PASSWORD_CONFIRM_REQUIRED": True,  # for RegisterFormV2
     "HASHING_SCHEMES": ["sha256_crypt", "hex_md5"],
     "DEPRECATED_HASHING_SCHEMES": ["auto"],
     "LOGIN_URL": "/login",
@@ -237,6 +243,11 @@ _default_config: dict[str, t.Any] = {
     "POST_CHANGE_EMAIL_VIEW": None,  # spa
     "CHANGE_EMAIL_SALT": "change-email-salt",
     "CHANGE_EMAIL_SUBJECT": _("Confirm your new email address"),
+    "CHANGE_USERNAME": False,
+    "CHANGE_USERNAME_TEMPLATE": "security/change_username.html",
+    "CHANGE_USERNAME_URL": "/change-username",
+    "POST_CHANGE_USERNAME_VIEW": None,
+    "SEND_USERNAME_CHANGE_EMAIL": True,
     "TWO_FACTOR_AUTHENTICATOR_VALIDITY": 120,
     "TWO_FACTOR_MAIL_VALIDITY": 300,
     "TWO_FACTOR_SMS_VALIDITY": 120,
@@ -289,10 +300,12 @@ _default_config: dict[str, t.Any] = {
     "EMAIL_SUBJECT_PASSWORD_NOTICE": _("Your password has been reset"),
     "EMAIL_SUBJECT_PASSWORD_CHANGE_NOTICE": _("Your password has been changed"),
     "EMAIL_SUBJECT_PASSWORD_RESET": _("Password reset instructions"),
+    "EMAIL_SUBJECT_USERNAME_CHANGE_NOTICE": _("Your username has been changed"),
+    "EMAIL_SUBJECT_USERNAME_RECOVERY": _("Your requested username"),
     "EMAIL_PLAINTEXT": True,
     "EMAIL_HTML": True,
-    "EMAIL_SUBJECT_TWO_FACTOR": _("Two-factor Login"),
-    "EMAIL_SUBJECT_TWO_FACTOR_RESCUE": _("Two-factor Rescue"),
+    "EMAIL_SUBJECT_TWO_FACTOR": _("Two-Factor Login"),
+    "EMAIL_SUBJECT_TWO_FACTOR_RESCUE": _("Two-Factor Rescue"),
     "USER_IDENTITY_ATTRIBUTES": [
         {"email": {"mapper": uia_email_mapper, "case_insensitive": True}}
     ],
@@ -311,20 +324,15 @@ _default_config: dict[str, t.Any] = {
         "PHONE_NUMBER": None,
     },
     "TWO_FACTOR_REQUIRED": False,
-    "TWO_FACTOR_SECRET": None,  # Deprecated - use TOTP_SECRETS
     "TWO_FACTOR_ENABLED_METHODS": ["email", "authenticator", "sms"],
-    "TWO_FACTOR_URI_SERVICE_NAME": "service_name",  # Deprecated - use TOTP_ISSUER
-    "TWO_FACTOR_SMS_SERVICE": "Dummy",  # Deprecated - use SMS_SERVICE
-    "TWO_FACTOR_SMS_SERVICE_CONFIG": {  # Deprecated - use SMS_SERVICE_CONFIG
-        "ACCOUNT_SID": None,
-        "AUTH_TOKEN": None,
-        "PHONE_NUMBER": None,
-    },
     "TWO_FACTOR_IMPLEMENTATIONS": {
         "code": "flask_security.twofactor.CodeTfPlugin",
         "webauthn": "flask_security.webauthn.WebAuthnTfPlugin",
     },
     "UNIFIED_SIGNIN": False,
+    "USERNAME_RECOVERY": False,
+    "USERNAME_RECOVERY_TEMPLATE": "security/recover_username.html",
+    "USERNAME_RECOVERY_URL": "/recover-username",
     "US_SETUP_SALT": "us-setup-salt",
     "US_SIGNIN_URL": "/us-signin",
     "US_SIGNIN_SEND_CODE_URL": "/us-signin/send-code",
@@ -352,7 +360,6 @@ _default_config: dict[str, t.Any] = {
     },
     "CSRF_HEADER": "X-XSRF-Token",
     "CSRF_COOKIE_REFRESH_EACH_REQUEST": False,
-    "BACKWARDS_COMPAT_UNAUTHN": False,
     "BACKWARDS_COMPAT_AUTH_TOKEN": False,
     "JOIN_USER_ROLES": True,
     "USERNAME_ENABLE": False,
@@ -407,7 +414,7 @@ _default_messages = {
         "error",
     ),
     "REAUTHENTICATION_REQUIRED": (
-        _("You must re-authenticate to access this endpoint"),
+        _("You must reauthenticate to access this endpoint"),
         "error",
     ),
     "CONFIRM_REGISTRATION": (
@@ -540,7 +547,7 @@ _default_messages = {
     ),
     "TWO_FACTOR_METHOD_NOT_AVAILABLE": (_("Marked method is not valid"), "error"),
     "TWO_FACTOR_DISABLED": (
-        _("You successfully disabled two factor authorization."),
+        _("You successfully disabled two-factor authorization."),
         "success",
     ),
     "TWO_FACTOR_SETUP_EXPIRED": (
@@ -558,7 +565,8 @@ _default_messages = {
     ),
     "US_SETUP_SUCCESSFUL": (_("Unified sign in setup successful"), "info"),
     "US_SPECIFY_IDENTITY": (_("You must specify a valid identity to sign in"), "error"),
-    "USE_CODE": (_("Use this code to sign in: %(code)s."), "info"),
+    "USE_CODE": (_("Use this code to sign in: %(code)s"), "info"),
+    "USERNAME_CHANGE": (_("You successfully changed your username"), "success"),
     "USERNAME_INVALID_LENGTH": (
         _(
             "Username must be at least %(min)d characters and less than"
@@ -580,15 +588,15 @@ _default_messages = {
         "error",
     ),
     "WEBAUTHN_EXPIRED": (
-        _("WebAuthn operation must be completed within %(within)s. Please start over."),
+        _("Passkey operations must be completed within %(within)s. Please start over."),
         "error",
     ),
     "WEBAUTHN_NAME_REQUIRED": (
-        _("Nickname for new credential is required."),
+        _("Nickname for new passkey is required."),
         "error",
     ),
     "WEBAUTHN_NAME_INUSE": (
-        _("%(name)s is already associated with a credential."),
+        _("%(name)s is already associated with a passkey."),
         "error",
     ),
     "WEBAUTHN_NAME_NOT_FOUND": (
@@ -596,31 +604,31 @@ _default_messages = {
         "error",
     ),
     "WEBAUTHN_CREDENTIAL_DELETED": (
-        _("Successfully deleted WebAuthn credential with name: %(name)s"),
+        _("Successfully deleted the passkey with name: %(name)s"),
         "info",
     ),
     "WEBAUTHN_REGISTER_SUCCESSFUL": (
-        _("Successfully added WebAuthn credential with name: %(name)s"),
+        _("Successfully added the passkey with name: %(name)s"),
         "info",
     ),
     "WEBAUTHN_CREDENTIAL_ID_INUSE": (
-        _("WebAuthn credential id already registered."),
+        _("Passkey already registered."),
         "error",
     ),
     "WEBAUTHN_UNKNOWN_CREDENTIAL_ID": (
-        _("Unregistered WebAuthn credential id."),
+        _("Unregistered passkey."),
         "error",
     ),
     "WEBAUTHN_ORPHAN_CREDENTIAL_ID": (
-        _("WebAuthn credential doesn't belong to any user."),
+        _("Passkey doesn't belong to any user."),
         "error",
     ),
     "WEBAUTHN_NO_VERIFY": (
-        _("Could not verify WebAuthn credential: %(cause)s."),
+        _("Could not verify passkey: %(cause)s."),
         "error",
     ),
     "WEBAUTHN_CREDENTIAL_WRONG_USAGE": (
-        _("Credential not registered for this use (first or secondary)"),
+        _("Passkey not registered for this use (first or secondary)"),
         "error",
     ),
     "WEBAUTHN_MISMATCH_USER_HANDLE": (
@@ -642,6 +650,10 @@ _default_messages = {
         ),
         "success",
     ),
+    "USERNAME_RECOVERY_REQUEST": (
+        _("If registered, your username will be sent to your email."),
+        "info",
+    ),
 }
 
 
@@ -660,7 +672,7 @@ class FormInfo:
     The default instantiator simply uses the class constructor - however
     applications can provide their OWN instantiator which can do pretty much anything
     as long as it returns an instantiated form. The 'cls' argument is optional since
-    the instantiator COULD be form specific.
+    the instantiator COULD be form agnostic (using the form name to differentiate).
 
     The instantiator callable will always be called from a flask request context
     and receive the following arguments::
@@ -680,7 +692,12 @@ class FormInfo:
 
 
 def _user_loader(user_id):
-    """Load based on fs_uniquifier (alternative_id)."""
+    """Load based on fs_uniquifier (alternative_id).
+    If the db model and db are properly configured and set there is no way we should
+    ever see a null user_id. But it is clearly wrong.
+    """
+    if not user_id:
+        return None
     user = _security.datastore.find_user(fs_uniquifier=str(user_id))
     if user and user.active:
         set_request_attr("fs_authn_via", "session")
@@ -1134,15 +1151,17 @@ class Security:
     :param datastore: An instance of a user datastore.
     :param register_blueprint: to register the Security blueprint or not.
     :param login_form: set form for the login view
-    :param verify_form: set form for re-authentication due to freshness check
+    :param verify_form: set form for reauthentication due to freshness check
     :param change_email_form: set form for changing email address
     :param register_form: set form for the register view when
-            :data:`SECURITY_CONFIRMABLE` is false
+            :data:`SECURITY_CONFIRMABLE` is false (deprecated) or for the register view
+            when :data:`SECURITY_USE_REGISTER_V2` is true.
     :param confirm_register_form: set form for the register view when
-            :data:`SECURITY_CONFIRMABLE` is true
+            :data:`SECURITY_CONFIRMABLE` is true (deprecated)
     :param forgot_password_form: set form for the forgot password view
     :param reset_password_form: set form for the reset password view
     :param change_password_form: set form for the change password view
+    :param change_username_form: set form for the change username view
     :param send_confirmation_form: set form for the send confirmation view
     :param passwordless_login_form: set form for the passwordless login view
     :param two_factor_setup_form: set form for the 2FA setup view
@@ -1151,10 +1170,11 @@ class Security:
     :param two_factor_select_form: set form for selecting between active 2FA methods
     :param mf_recovery_codes_form: set form for retrieving and setting recovery codes
     :param mf_recovery_form: set form for multi factor recovery
+    :param username_recovery_form: set form for the username recovery view
     :param us_signin_form: set form for the unified sign in view
     :param us_setup_form: set form for the unified sign in setup view
     :param us_setup_validate_form: set form for the unified sign in setup validate view
-    :param us_verify_form: set form for re-authenticating due to freshness check
+    :param us_verify_form: set form for reauthenticating due to freshness check
     :param wan_register_form: set form for registering a webauthn security key
     :param wan_register_response_form: set form for registering a webauthn security key
     :param wan_signin_form: set form for authenticating with a webauthn security key
@@ -1184,7 +1204,7 @@ class Security:
         on the instance and therefore won't track any changes.
 
     .. versionadded:: 3.4.0
-        ``verify_form`` added as part of freshness/re-authentication
+        ``verify_form`` added as part of freshness/reauthentication
 
     .. versionadded:: 3.4.0
         ``us_signin_form``, ``us_setup_form``, ``us_setup_validate_form``, and
@@ -1220,6 +1240,12 @@ class Security:
     .. versionadded:: 5.5.0
         ``change_email_form`` in support of the
          :ref:`Change-Email<configuration:change-email>` feature.
+    .. versionadded:: 5.6.0
+        ``username_recovery_form``, ``change_username_form``,
+
+    .. versionchanged:: 5.7.0
+        ``register_form`` default value is RegisterFormV2 and
+        ``confirm_register_form`` default is now ``None``.
 
     .. deprecated:: 4.0.0
         ``send_mail`` and ``send_mail_task``. Replaced with ``mail_util_cls``.
@@ -1231,6 +1257,8 @@ class Security:
         json_encoder_cls is no longer honored since Flask 2.2 has deprecated it.
     .. deprecated:: 5.3.1
         Passing in an anonymous_user class. Removed in 5.4.0
+    .. deprecated:: 5.6.0
+        Passing in a confirm_register_form class.
     """
 
     def __init__(
@@ -1242,8 +1270,9 @@ class Security:
         login_form: t.Type[LoginForm] = LoginForm,
         verify_form: t.Type[VerifyForm] = VerifyForm,
         change_email_form: t.Type[ChangeEmailForm] = ChangeEmailForm,
-        confirm_register_form: t.Type[ConfirmRegisterForm] = ConfirmRegisterForm,
-        register_form: t.Type[RegisterForm] = RegisterForm,
+        change_username_form: t.Type[ChangeUsernameForm] = ChangeUsernameForm,
+        confirm_register_form: t.Type[ConfirmRegisterForm] | None = None,
+        register_form: t.Type[RegisterForm] | t.Type[RegisterFormV2] = RegisterFormV2,
         forgot_password_form: t.Type[ForgotPasswordForm] = ForgotPasswordForm,
         reset_password_form: t.Type[ResetPasswordForm] = ResetPasswordForm,
         change_password_form: t.Type[ChangePasswordForm] = ChangePasswordForm,
@@ -1278,6 +1307,7 @@ class Security:
         phone_util_cls: t.Type[PhoneUtil] = PhoneUtil,
         render_template: t.Callable[..., str] = default_render_template,
         totp_cls: t.Type[Totp] = Totp,
+        username_recovery_form: t.Type[UsernameRecoveryForm] = UsernameRecoveryForm,
         username_util_cls: t.Type[UsernameUtil] = UsernameUtil,
         webauthn_util_cls: t.Type[WebauthnUtil] = WebauthnUtil,
         mf_recovery_codes_util_cls: t.Type[MfRecoveryCodesUtil] = MfRecoveryCodesUtil,
@@ -1296,14 +1326,14 @@ class Security:
         self.app = app
         self._datastore = datastore
         self._register_blueprint = register_blueprint
-        self.mail_util_cls = mail_util_cls
-        self.password_util_cls = password_util_cls
-        self.phone_util_cls = phone_util_cls
+        self._mail_util_cls = mail_util_cls
+        self._password_util_cls = password_util_cls
+        self._phone_util_cls = phone_util_cls
         self.render_template = render_template
-        self.totp_cls = totp_cls
-        self.username_util_cls = username_util_cls
-        self.webauthn_util_cls = webauthn_util_cls
-        self.mf_recovery_codes_util_cls = mf_recovery_codes_util_cls
+        self._totp_cls = totp_cls
+        self._username_util_cls = username_util_cls
+        self._webauthn_util_cls = webauthn_util_cls
+        self._mf_recovery_codes_util_cls = mf_recovery_codes_util_cls
         self._oauth = oauth
 
         # Forms - we create a list from constructor.
@@ -1317,6 +1347,7 @@ class Security:
             "reset_password_form": FormInfo(cls=reset_password_form),
             "change_email_form": FormInfo(cls=change_email_form),
             "change_password_form": FormInfo(cls=change_password_form),
+            "change_username_form": FormInfo(cls=change_username_form),
             "send_confirmation_form": FormInfo(cls=send_confirmation_form),
             "passwordless_login_form": FormInfo(cls=passwordless_login_form),
             "two_factor_verify_code_form": FormInfo(cls=two_factor_verify_code_form),
@@ -1325,6 +1356,7 @@ class Security:
             "two_factor_select_form": FormInfo(cls=two_factor_select_form),
             "mf_recovery_codes_form": FormInfo(cls=mf_recovery_codes_form),
             "mf_recovery_form": FormInfo(cls=mf_recovery_form),
+            "username_recovery_form": FormInfo(cls=username_recovery_form),
             "us_signin_form": FormInfo(cls=us_signin_form),
             "us_setup_form": FormInfo(cls=us_setup_form),
             "us_setup_validate_form": FormInfo(cls=us_setup_validate_form),
@@ -1386,6 +1418,7 @@ class Security:
         # Add necessary attributes here to keep mypy happy
         self.trackable: bool = False
         self.change_email: bool = False
+        self.change_username: bool = False
         self.confirmable: bool = False
         self.registerable: bool = False
         self.changeable: bool = False
@@ -1393,6 +1426,7 @@ class Security:
         self.two_factor: bool = False
         self.unified_signin: bool = False
         self.passwordless: bool = False
+        self.username_recovery: bool = False
         self.webauthn: bool = False
 
         self.support_mfa: bool = False
@@ -1414,7 +1448,7 @@ class Security:
         :param datastore: An instance of a user datastore.
         :param register_blueprint: to register the Security blueprint or not.
         :param kwargs: Can be used to override/initialize any of the form names,
-            flags, and utility classes.
+            or feature flags.
             All other kwargs are ignored.
 
         If you create the Security instance with both an 'app' and 'datastore'
@@ -1458,6 +1492,7 @@ class Security:
             "forgot_password_form",
             "reset_password_form",
             "change_password_form",
+            "change_username_form",
             "send_confirmation_form",
             "passwordless_login_form",
             "two_factor_verify_code_form",
@@ -1466,6 +1501,7 @@ class Security:
             "two_factor_select_form",
             "mf_recovery_form",
             "mf_recovery_codes_form",
+            "username_recovery_form",
             "us_signin_form",
             "us_setup_form",
             "us_setup_validate_form",
@@ -1483,25 +1519,57 @@ class Security:
             ):
                 self.forms[form_name].cls = form_cls
 
-        # The following will be set as attributes and initialized from either
+        # deprecate confirm_register_form, ConfirmRegisterForm and RegisterForm
+        if self.forms["confirm_register_form"].cls:
+            warnings.warn(
+                "The ConfirmRegisterForm and the confirm_register_form"
+                " option are"
+                " deprecated as of version 5.6.0 and will be removed in a future"
+                " release.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if self.forms["register_form"].cls and issubclass(
+            self.forms["register_form"].cls, RegisterForm
+        ):
+            warnings.warn(
+                "The RegisterForm is"
+                " deprecated as of version 5.6.0 and will be removed in a future"
+                " release. The form RegisterFormV2 should be sub-classed instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if not cv("USE_REGISTER_V2", app=app):
+            warnings.warn(
+                "The SECURITY_USE_REGISTER_V2 configuration option is"
+                " deprecated as of version 5.7.0 and will be removed in a future"
+                " release.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            # Switch back to old register and confirm_register forms
+            # Only do this is they haven't subclassed
+            if self.forms["register_form"].cls == RegisterFormV2:
+                self.forms["register_form"].cls = RegisterForm
+            if not self.forms["confirm_register_form"].cls:
+                self.forms["confirm_register_form"].cls = ConfirmRegisterForm
+
+        # The following will be set as attributes and initialized from constructor or
         # kwargs or config.
         attr_names = [
             "trackable",
             "registerable",
             "change_email",
+            "change_username",
             "confirmable",
             "changeable",
             "recoverable",
             "two_factor",
             "unified_signin",
+            "username_recovery",
             "passwordless",
             "webauthn",
-            "mail_util_cls",
-            "password_util_cls",
-            "phone_util_cls",
             "render_template",
-            "totp_cls",
-            "webauthn_util_cls",
             "datetime_factory",
         ]
         for attr in attr_names:
@@ -1514,6 +1582,12 @@ class Security:
             self.datastore.user_model, "fs_uniquifier"
         ):  # pragma: no cover
             raise ValueError("User model must contain fs_uniquifier as of 4.0.0")
+
+        if not cv("PASSWORD_REQUIRED", app=app) and not cv("UNIFIED_SIGNIN", app=app):
+            raise ValueError(
+                "SECURITY_PASSWORD_REQUIRED can only be set to False if"
+                " the SECURITY_UNIFIED_SIGNIN feature is enabled"
+            )
 
         # Check for pre-4.0 SECURITY_USER_IDENTITY_ATTRIBUTES format
         for uia in cv("USER_IDENTITY_ATTRIBUTES", app=app):  # pragma: no cover
@@ -1529,12 +1603,12 @@ class Security:
                 )
 
         self.login_manager = _get_login_manager(app, self)
-        self._phone_util = self.phone_util_cls(app)
-        self._mail_util = self.mail_util_cls(app)
-        self._password_util = self.password_util_cls(app)
-        self._username_util = self.username_util_cls(app)
-        self._webauthn_util = self.webauthn_util_cls(app)
-        self._mf_recovery_codes_util = self.mf_recovery_codes_util_cls(app)
+        self._phone_util = self._phone_util_cls(app)
+        self._mail_util = self._mail_util_cls(app)
+        self._password_util = self._password_util_cls(app)
+        self._username_util = self._username_util_cls(app)
+        self._webauthn_util = self._webauthn_util_cls(app)
+        self._mf_recovery_codes_util = self._mf_recovery_codes_util_cls(app)
         self.remember_token_serializer = _get_serializer(app, "remember")
         self.login_serializer = _get_serializer(app, "login")
         self.reset_serializer = _get_serializer(app, "reset")
@@ -1567,14 +1641,6 @@ class Security:
                 DeprecationWarning,
                 stacklevel=2,
             )
-        if cv("BACKWARDS_COMPAT_UNAUTHN", app=app):
-            warnings.warn(
-                "The BACKWARDS_COMPAT_UNAUTHN configuration variable is"
-                " deprecated as of version 5.4.0 and will be removed in a future"
-                " release.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
 
         if cv("USERNAME_ENABLE", app):
             if hasattr(self.datastore, "user_model") and not hasattr(
@@ -1604,13 +1670,22 @@ class Security:
             # Add dynamic fields - probably overkill to check if these are our forms.
             fcls = self.forms["register_form"].cls
             if fcls and issubclass(fcls, RegisterFormMixin):
-                fcls.username = get_register_username_field(app)
+                fcls.username = build_username_field(app)
             fcls = self.forms["confirm_register_form"].cls
             if fcls and issubclass(fcls, RegisterFormMixin):
-                fcls.username = get_register_username_field(app)
-            fcls = self.forms["login_form"].cls
-            if fcls and issubclass(fcls, LoginForm):
-                fcls.username = login_username_field
+                fcls.username = build_username_field(app)
+
+        fcls = self.forms["login_form"].cls
+        if fcls and issubclass(fcls, LoginForm):
+            build_login_form(app=app, fcls=fcls)
+
+        # new unified RegisterForm
+        fcls = self.forms["register_form"].cls
+        if fcls and issubclass(fcls, RegisterFormV2):
+            build_register_form(app=app, fcls=fcls)
+        fcls = self.forms["change_username_form"].cls
+        if fcls and issubclass(fcls, ChangeUsernameForm):
+            fcls.username = build_username_field(app=app)
 
         # initialize two-factor plugins. Note that each implementation likely
         # has its own feature flag which will control whether it is active or not.
@@ -1642,16 +1717,6 @@ class Security:
                 app.cli.add_command(users, un)
             if rn := cv("CLI_ROLES_NAME", app, strict=True):
                 app.cli.add_command(roles, rn)
-
-        # Migrate from TWO_FACTOR config to generic config.
-        for newc, oldc in [
-            ("SECURITY_SMS_SERVICE", "SECURITY_TWO_FACTOR_SMS_SERVICE"),
-            ("SECURITY_SMS_SERVICE_CONFIG", "SECURITY_TWO_FACTOR_SMS_SERVICE_CONFIG"),
-            ("SECURITY_TOTP_SECRETS", "SECURITY_TWO_FACTOR_SECRET"),
-            ("SECURITY_TOTP_ISSUER", "SECURITY_TWO_FACTOR_URI_SERVICE_NAME"),
-        ]:
-            if not app.config.get(newc, None):
-                app.config[newc] = app.config.get(oldc, None)
 
         # Alternate/code authentication configuration checks and setup
         alt_auth = False
@@ -1701,14 +1766,14 @@ class Security:
                 sms_service = cv("SMS_SERVICE", app=app)
                 if sms_service == "Twilio":  # pragma: no cover
                     self._check_modules("twilio", "SMS")
-                if self.phone_util_cls == PhoneUtil:
+                if self._phone_util_cls == PhoneUtil:
                     self._check_modules("phonenumbers", "SMS")
 
             secrets = cv("TOTP_SECRETS", app=app)
             issuer = cv("TOTP_ISSUER", app=app)
             if not secrets or not issuer:
                 raise ValueError("Both TOTP_SECRETS and TOTP_ISSUER must be set")
-            self._totp_factory = self.totp_cls(secrets, issuer)
+            self._totp_factory = self._totp_cls(secrets, issuer)
 
         if cv("PASSWORD_COMPLEXITY_CHECKER", app=app) == "zxcvbn":
             self._check_modules("zxcvbn", "PASSWORD_COMPLEXITY_CHECKER")
@@ -1716,7 +1781,7 @@ class Security:
         if cv("WEBAUTHN", app=app):
             self._check_modules("webauthn", "WEBAUTHN")
 
-        if cv("USERNAME_ENABLE", app=app):
+        if cv("USERNAME_ENABLE", app=app) and self._username_util_cls == UsernameUtil:
             self._check_modules("bleach", "USERNAME_ENABLE")
 
         # Register so other packages can reference our translations.
@@ -1981,6 +2046,48 @@ class Security:
         """
         self._reauthn_handler = cb
 
+    @property
+    def mail_util(self) -> MailUtil:
+        """Instance of mail_util_cls created at init_app() time.
+        See :ref:`api:extendable classes`"""
+        return self._mail_util
+
+    @property
+    def password_util(self) -> PasswordUtil:
+        """Instance of password_util_cls created at init_app() time.
+        See :ref:`api:extendable classes`"""
+        return self._password_util
+
+    @property
+    def username_util(self) -> UsernameUtil:
+        """Instance of username_util_cls created at init_app() time.
+        See :ref:`api:extendable classes`"""
+        return self._username_util
+
+    @property
+    def phone_util(self) -> PhoneUtil:
+        """Instance of phone_util_cls created at init_app() time.
+        See :ref:`api:extendable classes`"""
+        return self._phone_util
+
+    @property
+    def totp_factory(self) -> Totp:
+        """Instance of totp_factory created at init_app() time.
+        See :ref:`api:extendable classes`"""
+        return self._totp_factory
+
+    @property
+    def mf_recovery_codes_util(self) -> MfRecoveryCodesUtil:
+        """Instance of mf_recovery_codes_util_cls created at init_app() time.
+        See :ref:`api:extendable classes`"""
+        return self._mf_recovery_codes_util
+
+    @property
+    def webauthn_util(self) -> WebauthnUtil:
+        """Instance of webauthn_util_cls created at init_app() time.
+        See :ref:`api:extendable classes`"""
+        return self._webauthn_util
+
     def _add_ctx_processor(
         self, endpoint: str, fn: t.Callable[[], dict[str, t.Any]]
     ) -> None:
@@ -2023,6 +2130,16 @@ class Security:
         self, fn: t.Callable[[], dict[str, t.Any]]
     ) -> None:
         self._add_ctx_processor("change_password", fn)
+
+    def change_username_context_processor(
+        self, fn: t.Callable[[], dict[str, t.Any]]
+    ) -> None:
+        self._add_ctx_processor("change_username", fn)
+
+    def recover_username_context_processor(
+        self, fn: t.Callable[[], dict[str, t.Any]]
+    ) -> None:
+        self._add_ctx_processor("recover_username", fn)
 
     def send_confirmation_context_processor(
         self, fn: t.Callable[[], dict[str, t.Any]]

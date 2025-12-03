@@ -1,3 +1,4 @@
+{% set title = title|default(_fsdomain('Sign In')) %}
 {% extends "security/base.html" %}
 {% from "security/_macros.html" import render_field_with_errors, render_field, render_field_errors, render_form_errors, prop_next %}
 
@@ -22,10 +23,10 @@
   </form>
   {% if security.webauthn %}
     <hr class="fs-gap">
-    <h2>{{ _fsdomain("Use WebAuthn to Sign In") }}</h2>
+    <h2>{{ _fsdomain("Use a Passkey to Sign In") }}</h2>
     <div class="fs-gap">
       <form method="get" id="wan-signin-form" name="wan_signin_form">
-        <input id="wan_signin" name="wan_signin" type="submit" value="{{ _fsdomain('Sign in with WebAuthn') }}" formaction="{{ url_for_security('wan_signin') }}{{ prop_next() }}">
+        <input id="wan_signin" name="wan_signin" type="submit" value="{{ _fsdomain('Sign in with a passkey') }}" formaction="{{ url_for_security('wan_signin') }}{{ prop_next() }}">
       </form>
     </div>
   {% endif %}
@@ -35,7 +36,7 @@
     {% for provider in security.oauthglue.provider_names %}
       <div class="fs-gap">
         <form method="post" id="{{ provider }}_form" name="{{ provider }}_form">
-          <input id="{{ provider }}" name="{{ provider }}" type="submit" value="{{ _fsdomain('Sign in with ')~provider }}" formaction="{{ url_for_security('oauthstart', name=provider) }}{{ prop_next() }}">
+          <input id="{{ provider }}" name="{{ provider }}" type="submit" value="{{ _fsdomain('Sign in with %(provider)s', provider=provider) }}" formaction="{{ url_for_security('oauthstart', name=provider) }}{{ prop_next() }}">
           {% if csrf_token is defined %}
             <input id="{{ provider }}_csrf_token" name="{{ provider }}_csrf_token" type="hidden" value="{{ csrf_token() }}">
           {% endif %}

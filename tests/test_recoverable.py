@@ -1,11 +1,11 @@
 """
-    test_recoverable
-    ~~~~~~~~~~~~~~~~
+test_recoverable
+~~~~~~~~~~~~~~~~
 
-    Recoverable functionality tests
+Recoverable functionality tests
 
-    :copyright: (c) 2019-2024 by J. Christopher Wagner (jwag).
-    :license: MIT, see LICENSE for more details.
+:copyright: (c) 2019-2025 by J. Christopher Wagner (jwag).
+:license: MIT, see LICENSE for more details.
 """
 
 from datetime import date, timedelta
@@ -22,19 +22,24 @@ from tests.test_utils import (
     capture_flashes,
     capture_reset_password_requests,
     check_location,
-    get_form_input,
+    get_form_input_value,
+    is_authenticated,
     logout,
     populate_data,
 )
 
 from flask_security.core import Security, UserMixin
 from flask_security.forms import ForgotPasswordForm, LoginForm
-from flask_security.signals import password_reset, reset_password_instructions_sent
+from flask_security.signals import (
+    password_reset,
+    reset_password_instructions_sent,
+    username_recovery_email_sent,
+)
 
 pytestmark = pytest.mark.recoverable()
 
 
-def test_recoverable_flag(app, clients, get_message):
+def test_recoverable_flag(app, clients, get_message, outbox):
     recorded_resets = []
     recorded_instructions_sent = []
 
@@ -61,7 +66,7 @@ def test_recoverable_flag(app, clients, get_message):
         )
 
     assert len(recorded_instructions_sent) == 1
-    assert len(app.mail.outbox) == 1
+    assert len(outbox) == 1
     assert response.status_code == 200
     assert get_message("PASSWORD_RESET_REQUEST", email="joe@lp.com") in response.data
     token = requests[0]["token"]
@@ -131,7 +136,9 @@ def test_recoverable_flag(app, clients, get_message):
 @pytest.mark.registerable()
 @pytest.mark.settings(requires_confirmation_error_view="/confirm")
 def test_requires_confirmation_error_redirect(app, clients):
-    data = dict(email="jyl@lp.com", password="awesome sunset")
+    data = dict(
+        email="jyl@lp.com", password="awesome sunset", password_confirm="awesome sunset"
+    )
     clients.post("/register", data=data)
 
     response = clients.post(
@@ -142,7 +149,7 @@ def test_requires_confirmation_error_redirect(app, clients):
 
 
 @pytest.mark.settings()
-def test_recoverable_json(app, client, get_message):
+def test_recoverable_json(app, client, get_message, outbox):
     recorded_resets = []
     recorded_instructions_sent = []
 
@@ -165,7 +172,7 @@ def test_recoverable_json(app, client, get_message):
             assert response.headers["Content-Type"] == "application/json"
 
         assert len(recorded_instructions_sent) == 1
-        assert len(app.mail.outbox) == 1
+        assert len(outbox) == 1
         assert response.status_code == 200
         token = requests[0]["token"]
 
@@ -235,7 +242,7 @@ def test_recoverable_json(app, client, get_message):
     assert len(flashes) == 0
 
 
-def test_recoverable_template(app, client, get_message):
+def test_recoverable_template(app, client, get_message, outbox):
     # Check contents of email template - this uses a test template
     # in order to check all context vars since the default template
     # doesn't have all of them.
@@ -243,13 +250,13 @@ def test_recoverable_template(app, client, get_message):
         response = client.post(
             "/reset", data=dict(email="joe@lp.com"), follow_redirects=True
         )
-        outbox = app.mail.outbox
         assert len(outbox) == 1
         matcher = re.findall(r"\w+:.*", outbox[0].body, re.IGNORECASE)
         # should be 4 - link, email, token, config item
         assert matcher[1].split(":")[1] == "joe@lp.com"
         assert matcher[2].split(":")[1] == resets[0]["reset_token"]
         assert matcher[3].split(":")[1] == "True"  # register_blueprint
+        assert matcher[4].split(":")[1] == "/reset"  # SECURITY_RESET_URL
 
         # check link
         link = matcher[0].split(":", 1)[1]
@@ -289,8 +296,8 @@ def test_recover_invalidates_session(app, client):
     assert response.location == "/login?next=/profile"
 
 
-def test_login_form_description(sqlalchemy_app):
-    app = sqlalchemy_app()
+def test_login_form_description(app, sqlalchemy_datastore):
+    app.security = Security(app, datastore=sqlalchemy_datastore)
     with app.test_request_context("/login"):
         login_form = LoginForm()
         expected = '<a href="/reset">Forgot password?</a>'
@@ -774,7 +781,7 @@ def test_recoverable_json_async(app, client, get_message):
 @pytest.mark.settings(post_reset_view="/post_reset_view")
 def test_csrf(app, client, get_message):
     response = client.get("/reset")
-    csrf_token = get_form_input(response, "csrf_token")
+    csrf_token = get_form_input_value(response, "csrf_token")
     with capture_reset_password_requests() as requests:
         client.post(
             "/reset",
@@ -794,3 +801,241 @@ def test_csrf(app, client, get_message):
     data["csrf_token"] = csrf_token
     response = client.post(f"/reset/{token}", data=data)
     assert check_location(app, response.location, "/post_reset_view")
+
+
+@pytest.mark.csrf(ignore_unauth=True)
+@pytest.mark.settings(post_reset_view="/post_reset_view")
+def test_auth_csrf(app, client, get_message):
+    # Test reset when authenticated and unauth CSRF is off
+    authenticate(client)
+    response = client.get("/reset")
+    csrf_token = get_form_input_value(response, "csrf_token")
+    assert "matt@lp.com" == get_form_input_value(response, "email")
+    with capture_reset_password_requests() as requests:
+        client.post(
+            "/reset",
+            data=dict(email="matt@lp.com", csrf_token=csrf_token),
+            follow_redirects=True,
+        )
+    token = requests[0]["token"]
+
+    # use the token - no CSRF so shouldn't work
+    data = {"password": "mypassword", "password_confirm": "mypassword"}
+    response = client.post(
+        "/reset/" + token,
+        data=data,
+    )
+    assert b"The CSRF token is missing" in response.data
+
+    data["csrf_token"] = csrf_token
+    response = client.post(f"/reset/{token}", data=data)
+    assert check_location(app, response.location, "/post_reset_view")
+    assert not is_authenticated(client, get_message)
+
+
+def test_recoverable_auth_json(app, client, get_message, outbox):
+    recorded_resets = []
+    recorded_instructions_sent = []
+
+    @password_reset.connect_via(app)
+    def on_password_reset(app, user):
+        recorded_resets.append(user)
+
+    @reset_password_instructions_sent.connect_via(app)
+    def on_instructions_sent(app, **kwargs):
+        recorded_instructions_sent.append(kwargs["user"])
+
+    authenticate(client, "joe@lp.com", password="password")
+    with capture_flashes() as flashes:
+        # Test reset password creates a token and sends email
+        with capture_reset_password_requests() as requests:
+            response = client.post(
+                "/reset",
+                json=dict(email="joe@lp.com"),
+            )
+
+        assert len(recorded_instructions_sent) == 1
+        assert len(outbox) == 1
+        assert response.status_code == 200
+        token = requests[0]["token"]
+
+        # Test invalid email
+        response = client.post(
+            "/reset",
+            json=dict(email="whoknows@lp.com"),
+        )
+        assert response.status_code == 400
+        assert response.json["response"]["errors"][0].encode("utf-8") == get_message(
+            "USER_DOES_NOT_EXIST"
+        )
+
+        # Test submitting a new password
+        response = client.post(
+            "/reset/" + token + "?include_auth_token",
+            json=dict(password="awesome sunset", password_confirm="awesome sunset"),
+        )
+        assert not response.json["response"]
+        assert len(recorded_resets) == 1
+        assert not is_authenticated(client, get_message)
+
+        # Test logging in with the new password
+        response = client.post(
+            "/login?include_auth_token",
+            json=dict(email="joe@lp.com", password="awesome sunset"),
+        )
+        assert all(
+            k in response.json["response"]["user"]
+            for k in ["email", "authentication_token"]
+        )
+        logout(client)
+
+        # Use token again - should fail since already have set new password.
+        response = client.post(
+            "/reset/" + token,
+            json=dict(password="newpassword", password_confirm="newpassword"),
+            headers={"Content-Type": "application/json"},
+        )
+        assert response.status_code == 400
+        assert len(recorded_resets) == 1
+
+        # Test invalid token
+        response = client.post(
+            "/reset/bogus",
+            json=dict(password="newpassword", password_confirm="newpassword"),
+            headers={"Content-Type": "application/json"},
+        )
+        assert response.json["response"]["errors"][0].encode("utf-8") == get_message(
+            "INVALID_RESET_PASSWORD_TOKEN"
+        )
+    assert len(flashes) == 0
+
+
+@pytest.mark.username_recovery()
+def test_username_recovery_valid_email(app, clients, get_message, outbox):
+    recorded_recovery_sent = []
+
+    @username_recovery_email_sent.connect_via(app)
+    def on_email_sent(app, **kwargs):
+        assert isinstance(app, Flask)
+        assert isinstance(kwargs["user"], UserMixin)
+        recorded_recovery_sent.append(kwargs["user"])
+
+    # Test the username recovery view
+    response = clients.get("/recover-username")
+    assert b"<h1>Username Recovery</h1>" in response.data
+
+    response = clients.post(
+        "/recover-username", data=dict(email="joe@lp.com"), follow_redirects=True
+    )
+
+    assert len(recorded_recovery_sent) == 1
+    assert len(outbox) == 1
+    assert response.status_code == 200
+
+    with capture_flashes() as flashes:
+        response = clients.post(
+            "/recover-username",
+            data=dict(email="joe@lp.com"),
+            follow_redirects=True,
+        )
+    assert len(flashes) == 1
+    assert get_message("USERNAME_RECOVERY_REQUEST") == flashes[0]["message"].encode(
+        "utf-8"
+    )
+
+    # Validate the emailed username
+    email = outbox[1]
+    assert "Your username is: joe" in email.body
+
+    # Test JSON responses
+    response = clients.post(
+        "/recover-username",
+        json=dict(email="joe@lp.com"),
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 200
+    assert response.headers["Content-Type"] == "application/json"
+
+
+@pytest.mark.username_recovery()
+def test_username_recovery_invalid_email(app, clients, outbox):
+    response = clients.post(
+        "/recover-username", data=dict(email="bogus@lp.com"), follow_redirects=True
+    )
+
+    assert len(outbox) == 0
+    assert response.status_code == 200
+
+    # Test JSON responses
+    response = clients.post(
+        "/recover-username",
+        json=dict(email="bogus@lp.com"),
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 400
+    assert response.headers["Content-Type"] == "application/json"
+    assert len(response.json["response"]["errors"]) == 1
+    assert (
+        "Specified user does not exist"
+        in response.json["response"]["field_errors"]["email"][0]
+    )
+
+
+@pytest.mark.username_recovery()
+@pytest.mark.settings(return_generic_responses=True)
+def test_username_recovery_generic_responses(app, clients, get_message, outbox):
+    recorded_recovery_sent = []
+
+    @username_recovery_email_sent.connect_via(app)
+    def on_email_sent(app, **kwargs):
+        recorded_recovery_sent.append(kwargs["user"])
+
+    # Test with valid email
+    with capture_flashes() as flashes:
+        response = clients.post(
+            "/recover-username",
+            data=dict(email="joe@lp.com"),
+            follow_redirects=True,
+        )
+    assert len(flashes) == 1
+    assert get_message("USERNAME_RECOVERY_REQUEST") == flashes[0]["message"].encode(
+        "utf-8"
+    )
+    assert len(recorded_recovery_sent) == 1
+    assert len(outbox) == 1
+    assert response.status_code == 200
+
+    # Test with non-existant email (should still return 200)
+    with capture_flashes() as flashes:
+        response = clients.post(
+            "/recover-username",
+            data=dict(email="bogus@lp.com"),
+            follow_redirects=True,
+        )
+    assert len(flashes) == 1
+    assert get_message("USERNAME_RECOVERY_REQUEST") == flashes[0]["message"].encode(
+        "utf-8"
+    )
+    # Validate no email was sent (there should only be one from the previous test)
+    assert len(recorded_recovery_sent) == 1
+    assert len(outbox) == 1
+    assert response.status_code == 200
+
+    # Test JSON responses - valid email
+    response = clients.post(
+        "/recover-username",
+        json=dict(email="joe@lp.com"),
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 200
+    assert response.headers["Content-Type"] == "application/json"
+
+    # Test JSON responses - invalid email
+    response = clients.post(
+        "/recover-username",
+        json=dict(email="bogus@lp.com"),
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 200
+    assert response.headers["Content-Type"] == "application/json"
+    assert not any(e in response.json["response"].keys() for e in ["error", "errors"])

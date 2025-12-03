@@ -3,12 +3,166 @@ Flask-Security Changelog
 
 Here you can see the full list of changes between each Flask-Security release.
 
-Version 5.6.0
+Version 5.7.1
 -------------
+
+Released November 23, 2025
+
+Fixes
++++++
+- (:issue:`1147`) Regression when updating hash algorithm from bcrypt (willcroft)
+
+Version 5.7.0
+-------------
+
+Released November 14, 2025
+
+This release contains a set of small backward incompatible changes. Please read these notes carefully.
 
 Features & Improvements
 +++++++++++++++++++++++
-- (:issue:`1038`) Add support for 'secret_key' rotation
+- (:pr:`1132`) Add Arabic translations (samialfattani)
+- (:issue:`1123`) Enable forgot-password workflow for authenticated users.
+
+Fixes
++++++
+- (:pr:`1115`) Fix broken link in docs and improve docstrings/typing for util classes.
+- (:issue:`1127`) Add nonce to script tags if configured to support nonce-based Content-Security-Policy (ahanak).
+- (:issue:`1133`) Remove unnecessary (optional) dependency on sqlalchemy_utils.
+- (:pr:`1140`) Fix localization of tf_select choices.
+- (:pr:`1143`) Support bcrypt 5.0 - See below for important compatibility concerns.
+   This also replaces passlib with libpass for all versions.
+
+Docs and Chores
++++++++++++++++
+- (:pr:`1144`) Update ES and IT translations (gissimo)
+- (:pr:`1106`) Drop support for Python 3.9. This removes the dependency on importlib_resources,
+   updates pypy to 3.10, and uses 3.12 as base python for tests/tox.
+- (:pr:`1112`) Flip :py:data:`SECURITY_USE_REGISTER_V2` default to ``True``.
+- (:pr:`1117`) Flip default mail package back to Flask-Mail (from Flask-Mailman).
+- (:issue:`1139`) Change external facing terminology from 'WebAuthn Credential' to 'passkey'.
+- (:pr:`1142`) Setting of xx_util_cls from kwargs which was deprecated in 5.6.1 has been removed.
+   The BACKWARDS_COMPAT_UNAUTHN option (code) which has been deprecated since 5.4 has been removed.
+
+Backwards Compatibility Concerns
++++++++++++++++++++++++++++++++++
+ - Flask-Security now depends on ``libpass`` (https://pypi.org/project/libpass/) for all versions. Be sure to UNINSTALL
+   passlib, ensure the passlib directory is empty and then install libpass - we have seen reports when both are installed -
+   it doesn't work!
+
+   In bcrypt 5.0 they started throwing a ValueError for passwords/secrets longer than 72 bytes. It is important to know that by default
+   Flask-Security performs a double hash - taking the secret, using HMAC(SHA512) then b64encodng the result. This means that ANY password
+   will be longer than 72 bytes (86 to be exact). In the past bcrypt would silently truncate the input - now we have to do that explicitly.
+   OWASP says truncation concerns are negligible: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#input-limits-of-bcrypt
+
+ - The default RegisterForm is now the new RegisterFormV2 - Please read :ref:`register_form_migration`.
+   Flask-Security will emit a DeprecationWarning if the :py:data:`SECURITY_USE_REGISTER_V2` is set to False.
+
+ - In 5.0 we changed the default mailer package to Flask-Mailman since Flask-Mail was no longer supported.
+   Flask-Mail is again supported and is part of Pallets-Eco. Both packages are still supported based on which one
+   an application initializes. The only backwards compatibility concern is that if you use the setup extras 'common',
+   it will install Flask-Mail rather than Flask-Mailman.
+
+ - In the optional dependencies 'fsqla' we removed sqlalchemy_utils - while many applications might want these useful
+   add-ons - they aren't required for standard SQLAlchemy use.
+
+Version 5.6.2
+-------------
+
+Released May 4, 2025
+
+Fixes
++++++
+- (:issue:`1032` and :issue:`1096`) Use libpass for python >= 3.12
+- (:pr:`1086`) Fix FR translation test for Change Password (nickcuenca)
+- (:issue:`1090`) Properly document context variables available in email templates.
+- (:issue:`1093`) Add confirmation link/token and reset link/token to welcome_existing email template.
+
+Notes
++++++
+Since Python 3.12 no longer contains setuptools - the old passlib failed to import.
+Rather than require setuptools, for Python >=3.12 we now depend on the fork ``libpass`` (https://pypi.org/project/libpass/)
+This is a very new package and rather than possibly cause backwards compat issues for projects
+not using Python >=3.12 - Flask-Security maintains the dependency on passlib for Python <3.12.
+
+Note: you can still use passlib for 3.12 and 3.13 - you have to manually add setuptools.
+
+Version 5.6.1
+-------------
+
+Released March 18, 2025
+
+Fixes
++++++
+- (:issue:`1077`) Fix runtime modification of a config string (TWO_FACTOR_METHODS)
+- (:issue:`1078`) Fix CLI user_create when model doesn't contain username
+- (:issue:`1076`) xxx_util_cls instances should be public and documented.
+
+Backwards Compatibility Concerns
++++++++++++++++++++++++++++++++++
+As part of :issue:`1076` the following cleanup was done:
+
+- The xxx_util_cls arguments are now stored in 'private' instance variables - they are never
+  used after Flask-Security initialization and have never been documented.
+- The xxx_util_cls options should only be set as part of Flask-Security construction.
+  Setting them via init_app(kwargs) or app.config["SECURITY_XX"] has been deprecated.
+
+Version 5.6.0
+-------------
+
+Released February 12, 2025
+
+Features & Improvements
++++++++++++++++++++++++
+- (:issue:`1038`) Add support for 'secret_key' rotation (jamesejr)
+- (:issue:`980`) Add support for username recovery in simple login flows (jamesejr)
+- (:issue:`1055`) Add support for changing username
+- (:pr:`1048`) Add support for Python 3.13
+- (:issue:`1043`) Unify Register forms (and split out re-type password option) Please read :ref:`register_form_migration`.
+
+Fixes
++++++
+- (:pr:`1062`) Fix duplicate HTML ids in templates.
+- (:pr:`1067`) Fix more duplicate HTML ids in templates.
+- (:issue:`1064`) Ensure templates pass W3C validation (see below)
+
+Docs and Chores
++++++++++++++++
+- (:pr:`1052`) Remove deprecated TWO_FACTOR configuration variables
+- (:pr:`1069`) Update ES and IT translations (gissimo)
+- (:pr:`1071`) Improve templates - two-factor is hyphenated, re-authenticate is not.
+  Also try to embed links into xlatable strings.
+
+Notes
++++++
+Python 3.13 removed ``crypt``, which passlib attempts to import and use as
+part of its safe_crypt() method (fallback is to return None).
+However - that method only appears to be called in a few crypt handlers and
+for bcrypt - only for the built-in bcrypt - not if the bcrypt package is installed.
+passlib is not maintained - a new fork (10/1/2024) (https://pypi.org/project/libpass/)
+seems promising and has been tested with python 3.13 and Flask-Security. If that fork matures we will
+change the dependencies appropriately.
+
+The register forms have been combined - or more accurately - there is a new RegisterFormV2
+that subsumes the features of both the old RegisterForm and ConfirmRegisterForm.
+Please read :ref:`register_form_migration`.
+
+The SECURITY_TWO_FACTOR_{SECRET, URI_SERVICE_NAME, SMS_SERVICE, SMS_SERVICE_CONFIG}
+have been removed (they have been deprecated for a while). Use the equivalent
+:py:data:`SECURITY_TOTP_SECRETS`, :py:data:`SECURITY_TOTP_ISSUER`, :py:data:`SECURITY_SMS_SERVICE` and
+:py:data:`SECURITY_SMS_SERVICE_CONFIG`.
+
+Backwards Compatibility Concerns
++++++++++++++++++++++++++++++++++
+The fixes to all the templates to pass W3C validation could introduce some incompatibilities:
+
+- All templates now have a default <title> - before, the <title> element was empty.
+- The HTML id of the rescue form submit button was changed to 'rescue'
+- The HTML id of the webauthn delete form name field was changed to 'delete-name'
+- Some template headings were changed to improve consistency
+- The csrf_token HTML id was changed on us_setup.html, wan_register.html, two_factor_setup.html
+  two_factor_verify_code.html, us_verify.html, verify.html for the second form on the page.
+- On us_setup.html and two_factor_setup.html the submit code button HTML id was changed.
 
 Version 5.5.2
 -------------

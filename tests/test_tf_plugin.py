@@ -1,11 +1,11 @@
 """
-    test_tf_plugin
-    ~~~~~~~~~~~~~~~~~
+test_tf_plugin
+~~~~~~~~~~~~~~~~~
 
-    tf_plugin tests
+tf_plugin tests
 
-    :copyright: (c) 2022-2022 by J. Christopher Wagner (jwag).
-    :license: MIT, see LICENSE for more details.
+:copyright: (c) 2022-2025 by J. Christopher Wagner (jwag).
+:license: MIT, see LICENSE for more details.
 """
 
 import json
@@ -25,9 +25,8 @@ from tests.test_webauthn import HackWebauthnUtil, wan_signin, reg_2_keys
 pytest.importorskip("webauthn")
 
 
-@pytest.mark.webauthn()
+@pytest.mark.webauthn(webauthn_util_cls=HackWebauthnUtil)
 @pytest.mark.two_factor()
-@pytest.mark.settings(webauthn_util_cls=HackWebauthnUtil)
 def test_tf_select(app, client, get_message):
     # Test basic select mechanism when more than one 2FA has been setup
     wankeys = reg_2_keys(client)  # add a webauthn 2FA key (authenticates)
@@ -41,12 +40,12 @@ def test_tf_select(app, client, get_message):
         data=dict(email="matt@lp.com", password="password"),
         follow_redirects=True,
     )
-    assert b"Select Two Factor Method" in response.data
+    assert b"Select Two-Factor Method" in response.data
     tf_select_url = get_form_action(response)
     response = client.post(
         tf_select_url, data=dict(which="webauthn"), follow_redirects=True
     )
-    assert b"Use Your WebAuthn Security Key as a Second Factor" in response.data
+    assert b"Use a Passkey as a Second Factor" in response.data
     wan_signin_url = get_form_action(response)
     assert "/wan-signin?next=/profile" == wan_signin_url
 
@@ -63,7 +62,7 @@ def test_tf_select(app, client, get_message):
         data=dict(email="matt@lp.com", password="password"),
         follow_redirects=True,
     )
-    assert b"Select Two Factor Method" in response.data
+    assert b"Select Two-Factor Method" in response.data
     response = client.post("/tf-select", data=dict(which="sms"), follow_redirects=True)
     assert b"Please enter your authentication code generated via: SMS" in response.data
     code = sms_sender.messages[0].split()[-1]
@@ -78,9 +77,8 @@ def test_tf_select(app, client, get_message):
     assert not tf_in_session(get_existing_session(client))
 
 
-@pytest.mark.webauthn()
+@pytest.mark.webauthn(webauthn_util_cls=HackWebauthnUtil)
 @pytest.mark.two_factor()
-@pytest.mark.settings(webauthn_util_cls=HackWebauthnUtil)
 def test_tf_select_json(app, client, get_message):
     # Test basic select mechanism when more than one 2FA has been setup
     headers = {"Accept": "application/json", "Content-Type": "application/json"}

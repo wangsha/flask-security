@@ -1,11 +1,11 @@
 """
-    test_two_factor
-    ~~~~~~~~~~~~~~~~~
+test_two_factor
+~~~~~~~~~~~~~~~~~
 
-    two_factor tests
+two_factor tests
 
-    :copyright: (c) 2019-2024 by J. Christopher Wagner (jwag).
-    :license: MIT, see LICENSE for more details.
+:copyright: (c) 2019-2025 by J. Christopher Wagner (jwag).
+:license: MIT, see LICENSE for more details.
 """
 
 from datetime import date, timedelta
@@ -32,7 +32,7 @@ from tests.test_utils import (
     check_location,
     check_xlation,
     get_form_action,
-    get_form_input,
+    get_form_input_value,
     get_session,
     is_authenticated,
     json_authenticate,
@@ -239,7 +239,7 @@ def test_tf_reset_invalidates_cookie(app, client):
     data = dict(email="gal@lp.com", password="password")
     response = client.post("/login", data=data, follow_redirects=True)
 
-    assert b"Two-factor authentication adds an extra layer of security" in response.data
+    assert b"Two-Factor authentication adds an extra layer of security" in response.data
 
     client.delete_cookie("tf_validity")
     # Test JSON
@@ -305,7 +305,7 @@ def test_two_factor_illegal_state(app, client, get_message):
 
 
 @pytest.mark.settings(two_factor_required=True)
-def test_two_factor_flag(app, clients, get_message):
+def test_two_factor_flag(app, clients, get_message, outbox):
     # trying to verify code without going through two-factor
     # first login function
     client = clients
@@ -344,7 +344,7 @@ def test_two_factor_flag(app, clients, get_message):
     # Test two-factor authentication first login
     data = dict(email="matt@lp.com", password="password")
     response = client.post("/login", data=data, follow_redirects=True)
-    message = b"Two-factor authentication adds an extra layer of security"
+    message = b"Two-Factor authentication adds an extra layer of security"
     assert message in response.data
     response = client.post(
         "/tf-setup", data=dict(setup="not_a_method"), follow_redirects=True
@@ -413,7 +413,7 @@ def test_two_factor_flag(app, clients, get_message):
     # make sure two_factor_verify_code_form is set
     assert b'name="code"' in response.data
 
-    code = app.mail.outbox[1].body.split()[-1]
+    code = outbox[1].body.split()[-1]
     # submit right token and show appropriate response
     response = client.post("/tf-validate", data=dict(code=code), follow_redirects=True)
     assert b"You successfully changed your two-factor method" in response.data
@@ -464,7 +464,7 @@ def test_two_factor_flag(app, clients, get_message):
     # Test two-factor authentication first login
     data = dict(email="matt@lp.com", password="password")
     response = client.post("/login", data=data, follow_redirects=True)
-    message = b"Two-factor authentication adds an extra layer of security"
+    message = b"Two-Factor authentication adds an extra layer of security"
     assert message in response.data
 
     # check availability of qrcode when this option is not picked
@@ -540,7 +540,7 @@ def test_no_rescue_email(app, client):
 def test_setup_bad_phone(app, client, get_message):
     data = dict(email="matt@lp.com", password="password")
     response = client.post("/login", data=data, follow_redirects=True)
-    message = b"Two-factor authentication adds an extra layer of security"
+    message = b"Two-Factor authentication adds an extra layer of security"
     assert message in response.data
 
     sms_sender = SmsSenderFactory.createSender("test")
@@ -663,7 +663,7 @@ def test_json(app, client):
 
 
 @pytest.mark.settings(two_factor_rescue_mail="helpme@myapp.com")
-def test_rescue_json(app, client):
+def test_rescue_json(app, client, outbox):
     # it's an error if not primary authenticated
     rescue_data_json = dict(help_setup="help")
     response = client.post(
@@ -680,11 +680,10 @@ def test_rescue_json(app, client):
     rescue_data = dict(help_setup="email")
     response = client.post("/tf-rescue", json=rescue_data)
     assert response.status_code == 200
-    outbox = app.mail.outbox
 
-    assert outbox[0].to == ["gal2@lp.com"]
-    assert outbox[0].from_email == "no-reply@localhost"
-    assert outbox[0].subject == "Two-factor Login"
+    assert outbox[0].recipients == ["gal2@lp.com"]
+    assert outbox[0].sender == "no-reply@localhost"
+    assert outbox[0].subject == "Two-Factor Login"
     matcher = re.match(r".*code: ([0-9]+).*", outbox[0].body, re.IGNORECASE | re.DOTALL)
     response = client.post("/tf-validate", json=dict(code=matcher.group(1)))
     assert response.status_code == 200
@@ -695,11 +694,10 @@ def test_rescue_json(app, client):
     rescue_data = dict(help_setup="help")
     response = client.post("/tf-rescue", json=rescue_data)
     assert response.status_code == 200
-    outbox = app.mail.outbox
 
-    assert outbox[1].to == ["helpme@myapp.com"]
-    assert outbox[1].from_email == "no-reply@localhost"
-    assert outbox[1].subject == "Two-factor Rescue"
+    assert outbox[1].recipients == ["helpme@myapp.com"]
+    assert outbox[1].sender == "no-reply@localhost"
+    assert outbox[1].subject == "Two-Factor Rescue"
     assert "gal2@lp.com" in outbox[1].body
 
 
@@ -856,7 +854,7 @@ def test_opt_in(app, client, get_message):
     # Now opt back out.
     data = dict(setup="disable")
     response = client.post("/tf-setup", data=data, follow_redirects=True)
-    assert b"You successfully disabled two factor authorization." in response.data
+    assert b"You successfully disabled two-factor authorization." in response.data
 
     # Log out
     logout(client)
@@ -992,11 +990,11 @@ def test_opt_in_state_token(app, client, get_message):
     assert not tf_in_session(session)
 
     response = client.get("/tf-setup")
-    assert b"Disable two factor" in response.data
+    assert b"Disable two-factor" in response.data
     assert b"Currently setup two-factor method: SMS" in response.data
 
 
-def test_opt_out_json(app, client):
+def test_opt_out_json(app, client, get_message):
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
 
     tf_authenticate(app, client)
@@ -1012,8 +1010,9 @@ def test_opt_out_json(app, client):
     session = get_session(response)
     assert "tf_state" not in session
     # verify logged in
-    response = client.get("/profile", follow_redirects=False)
-    assert response.status_code == 200
+    assert is_authenticated(client, get_message)
+    response = client.get("tf-setup", headers=headers)
+    assert "disable" not in response.json["response"]["tf_available_methods"]
 
 
 @pytest.mark.filterwarnings("ignore")
@@ -1199,7 +1198,7 @@ def test_totp_secret_generation(app, client):
     # Finally opt back out and check that tf_totp_secret is None
     data = dict(setup="disable")
     response = client.post("/tf-setup", data=data, follow_redirects=True)
-    assert b"You successfully disabled two factor authorization." in response.data
+    assert b"You successfully disabled two-factor authorization." in response.data
     with app.app_context():
         user = app.security.datastore.find_user(email="jill@lp.com")
         assert user.tf_totp_secret is None
@@ -1239,7 +1238,7 @@ def test_authr_identity(app, client):
 
     setup_data = dict(setup="authenticator")
     response = client.post("/tf-setup", json=setup_data, headers=headers)
-    assert response.json["response"]["tf_authr_issuer"] == "service_name"
+    assert response.json["response"]["tf_authr_issuer"] == "tests"
     assert response.json["response"]["tf_authr_username"] == "jill"
     assert response.json["response"]["tf_state"] == "validating_profile"
     assert "tf_authr_key" in response.json["response"]
@@ -1269,16 +1268,15 @@ def test_authr_identity_num(app, client):
         {"username": {"mapper": lambda x: x}},
     ]
 )
-def test_email_salutation(app, client):
+def test_email_salutation(app, client, outbox):
     authenticate(client, email="jill@lp.com")
     response = client.post("/tf-setup", data=dict(setup="email"), follow_redirects=True)
     msg = b"Enter code to complete setup"
     assert msg in response.data
-    outbox = app.mail.outbox
 
-    assert "jill@lp.com" in outbox[0].to
+    assert "jill@lp.com" in outbox[0].recipients
     assert "jill@lp.com" in outbox[0].body
-    assert "jill@lp.com" in outbox[0].alternatives[0][0]
+    assert "jill@lp.com" in outbox[0].alts["html"]
 
 
 @pytest.mark.settings(
@@ -1287,16 +1285,15 @@ def test_email_salutation(app, client):
         {"email": {"mapper": uia_email_mapper}},
     ]
 )
-def test_username_salutation(app, client):
+def test_username_salutation(app, client, outbox):
     authenticate(client, email="jill@lp.com")
     response = client.post("/tf-setup", data=dict(setup="email"), follow_redirects=True)
     msg = b"Enter code to complete setup"
     assert msg in response.data
-    outbox = app.mail.outbox
 
-    assert "jill@lp.com" in outbox[0].to
+    assert "jill@lp.com" in outbox[0].recipients
     assert "jill@lp.com" not in outbox[0].body
-    assert "jill@lp.com" not in outbox[0].alternatives[0][0]
+    assert "jill@lp.com" not in outbox[0].alts["html"]
     assert "jill" in outbox[0].body
 
 
@@ -1375,20 +1372,20 @@ def test_replace_send_code(app, get_message):
         )
         ds.commit()
 
-        data = dict(email="trp@lp.com", password="password")
-        response = client.post("/login", data=data, follow_redirects=True)
-        assert b"Please enter your authentication code" in response.data
-        rescue_data = dict(help_setup="email")
-        response = client.post("/tf-rescue", data=rescue_data, follow_redirects=True)
-        assert b"That didnt work out as we planned" in response.data
+    data = dict(email="trp@lp.com", password="password")
+    response = client.post("/login", data=data, follow_redirects=True)
+    assert b"Please enter your authentication code" in response.data
+    rescue_data = dict(help_setup="email")
+    response = client.post("/tf-rescue", data=rescue_data, follow_redirects=True)
+    assert b"That didnt work out as we planned" in response.data
 
-        # Test JSON
-        headers = {"Accept": "application/json", "Content-Type": "application/json"}
-        response = client.post("/tf-rescue", json=rescue_data, headers=headers)
-        assert response.status_code == 500
-        assert (
-            response.json["response"]["field_errors"]["help_setup"][0] == "Failed Again"
-        )
+    # Test JSON
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    response = client.post("/tf-rescue", json=rescue_data, headers=headers)
+    assert response.status_code == 500
+    assert response.json["response"]["field_errors"]["help_setup"][0] == "Failed Again"
+    with app.app_context():
+        db.engine.dispose()
 
 
 def test_propagate_next(app, client):
@@ -1419,7 +1416,7 @@ def test_propagate_next(app, client):
 
 @pytest.mark.settings(freshness=timedelta(minutes=0))
 def test_verify(app, client, get_message):
-    # Test setup when re-authenticate required
+    # Test setup when reauthenticate required
     authenticate(client)
     response = client.get("tf-setup", follow_redirects=False)
     assert check_location(app, response.location, "/verify?next=/tf-setup")
@@ -1457,7 +1454,7 @@ def test_verify(app, client, get_message):
 
 
 def test_verify_json(app, client, get_message):
-    # Test setup when re-authenticate required
+    # Test setup when reauthenticate required
     # N.B. with freshness=0 we never set a grace period and should never be able to
     # get to /tf-setup
     authenticate(client)
@@ -1490,7 +1487,7 @@ def test_setup_nofresh(app, client, get_message):
 
 
 @pytest.mark.settings(two_factor_enabled_methods=["email"])
-def test_no_sms(app, get_message):
+def test_no_sms(app, get_message, outbox):
     pytest.importorskip("sqlalchemy")
     pytest.importorskip("flask_sqlalchemy")
 
@@ -1552,10 +1549,13 @@ def test_no_sms(app, get_message):
     msg = b"Enter code to complete setup"
     assert msg in response.data
 
-    code = app.mail.outbox[0].body.split()[-1]
+    code = outbox[0].body.split()[-1]
     # submit right token and show appropriate response
     response = client.post("/tf-validate", data=dict(code=code), follow_redirects=True)
     assert b"You successfully changed your two-factor method" in response.data
+
+    with app.app_context():
+        db.engine.dispose()
 
 
 @pytest.mark.settings(two_factor_post_setup_view="/post_setup_view")
@@ -1605,7 +1605,7 @@ def test_setup_csrf(app, client):
     tf_authenticate(app, client)
     response = client.get("tf-setup")
     assert b"Disable" in response.data
-    csrf_token = get_form_input(response, "csrf_token")
+    csrf_token = get_form_input_value(response, "csrf_token")
 
     response = client.post("tf-setup", data=dict(setup="disable"))
     assert b"The CSRF token is missing" in response.data

@@ -1,11 +1,11 @@
 """
-    test_utils
-    ~~~~~~~~~~
+test_utils
+~~~~~~~~~~
 
-    Test utils
+Test utils
 
-    :copyright: (c) 2019-2024 by J. Christopher Wagner (jwag).
-    :license: MIT, see LICENSE for more details.
+:copyright: (c) 2019-2025 by J. Christopher Wagner (jwag).
+:license: MIT, see LICENSE for more details.
 """
 
 from __future__ import annotations
@@ -17,13 +17,19 @@ import time
 from flask.json.tag import TaggedJSONSerializer
 from flask.signals import message_flashed
 
-from flask_security import Security, SmsSenderBaseClass, SmsSenderFactory, UserMixin
+from flask_security import (
+    Security,
+    SmsSenderBaseClass,
+    SmsSenderFactory,
+    UserMixin,
+)
 from flask_security.signals import (
     login_instructions_sent,
     reset_password_instructions_sent,
     tf_security_token_sent,
     user_registered,
     us_security_token_sent,
+    username_recovery_email_sent,
 )
 from flask_security.utils import hash_data, hash_password
 
@@ -44,7 +50,7 @@ def authenticate(
     data = dict(email=email, password=password, remember="y")
     if csrf:
         response = client.get(endpoint or "/login")
-        data["csrf_token"] = get_form_input(response, "csrf_token")
+        data["csrf_token"] = get_form_input_value(response, "csrf_token")
     return client.post(endpoint or "/login", data=data, **kwargs)
 
 
@@ -135,17 +141,18 @@ def get_session(response):
                 return val[1]
 
 
-def setup_tf_sms(client, url_prefix=None):
+def setup_tf_sms(client, url_prefix=None, csrf_token=None):
     # Simple setup of SMS as a second factor and return the sender so caller
     # can get codes.
     SmsSenderFactory.senders["test"] = SmsTestSender
     sms_sender = SmsSenderFactory.createSender("test")
-    data = dict(setup="sms", phone="+442083661188")
+    data = dict(setup="sms", phone="+442083661188", csrf_token=csrf_token)
     response = client.post("/".join(filter(None, (url_prefix, "tf-setup"))), json=data)
     assert sms_sender.get_count() == 1
     code = sms_sender.messages[0].split()[-1]
     response = client.post(
-        "/".join(filter(None, (url_prefix, "tf-validate"))), json=dict(code=code)
+        "/".join(filter(None, (url_prefix, "tf-validate"))),
+        json=dict(code=code, csrf_token=csrf_token),
     )
     assert response.status_code == 200
     return sms_sender
@@ -197,9 +204,7 @@ def get_form_action(response, ordinal=0):
     return matcher[ordinal]
 
 
-def get_form_input(response, field_id):
-    # return value of field with the id == field_id or None if not found
-    rex = f'<input [^>]*id="{field_id}"[^>]*value="([^"]*)">'
+def _parse_form_input(response, rex):
     matcher = re.findall(
         rex,
         response.data.decode("utf-8"),
@@ -208,6 +213,18 @@ def get_form_input(response, field_id):
     if matcher:
         return matcher[0]
     return None
+
+
+def get_form_input(response, field_id):
+    # return entire input field for field with the id == field_id or None if not found
+    return _parse_form_input(response, f'<input ([^>]*id="{field_id}"[^>]*)">')
+
+
+def get_form_input_value(response, field_id):
+    # return 'value' of field with the id == field_id or None if not found
+    return _parse_form_input(
+        response, f'<input [^>]*id="{field_id}"[^>]*value="([^"]*)">'
+    )
 
 
 def check_xlation(app, locale):
@@ -379,6 +396,22 @@ def capture_reset_password_requests(reset_password_sent_at=None):
         yield reset_requests
     finally:
         reset_password_instructions_sent.disconnect(_on)
+
+
+@contextmanager
+def capture_username_recovery_requests():
+    """Testing utility for capturing username recovery requests."""
+    recovery_requests = []
+
+    def _on(app, **data):
+        recovery_requests.append(data)
+
+    username_recovery_email_sent.connect(_on)
+
+    try:
+        yield recovery_requests
+    finally:
+        username_recovery_email_sent.disconnect(_on)
 
 
 @contextmanager

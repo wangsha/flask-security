@@ -19,23 +19,24 @@ Flask application. They include:
 3. Role and Permission management
 4. Account activation (via email confirmation) (optional)
 5. Password management (recovery and resetting) (optional)
-6. Two-factor authentication (optional)
-7. WebAuthn Support (optional)
-8. Use 'social'/Oauth for authentication (e.g. google, github, ..) (optional)
-9. Change email (optional)
-10. Login tracking (optional)
-11. JSON/Ajax Support
+6. Username management (configuration, recovery, change) (optional)
+7. Two-factor authentication via email, SMS, authenticator (optional)
+8. WebAuthn Support (optional)
+9. 'social'/Oauth for authentication (e.g. google, github, ..) (optional)
+10. Change email (optional)
+11. Login tracking (optional)
+12. JSON/Ajax Support
 
 
 Many of these features are made possible by integrating various Flask extensions
 and libraries. They include:
 
 * `Flask-Login <https://flask-login.readthedocs.org/en/latest/>`_
-* `Flask-Mailman <https://pypi.org/project/Flask-Mailman/>`_
+* `Flask-Mail <https://pypi.org/project/Flask-Mail/>`_
 * `Flask-Principal <https://pypi.org/project/Flask-Principal/>`_
 * `Flask-WTF <https://pypi.org/project/Flask-WTF/>`_
 * `itsdangerous <https://pypi.org/project/itsdangerous/>`_
-* `passlib <https://pypi.org/project/passlib/>`_
+* `passlib <https://pypi.org/project/libpass/>`_
 * `QRCode <https://pypi.org/project/qrcode/>`_
 * `webauthn <https://pypi.org/project/webauthn/>`_
 * `authlib <https://pypi.org/project/Authlib/>`_

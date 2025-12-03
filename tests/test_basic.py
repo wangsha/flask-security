@@ -1,11 +1,11 @@
 """
-    test_basic
-    ~~~~~~~~~~~
+test_basic
+~~~~~~~~~~~
 
-    Test common functionality
+Test common functionality
 
-    :copyright: (c) 2019-2024 by J. Christopher Wagner (jwag).
-    :license: MIT, see LICENSE for more details.
+:copyright: (c) 2019-2024 by J. Christopher Wagner (jwag).
+:license: MIT, see LICENSE for more details.
 """
 
 import base64
@@ -21,6 +21,7 @@ from flask_security.decorators import auth_required
 from flask_principal import identity_loaded
 from freezegun import freeze_time
 
+from tests.conftest import v2_param
 from tests.test_utils import (
     authenticate,
     capture_flashes,
@@ -28,7 +29,7 @@ from tests.test_utils import (
     check_location,
     get_auth_token_version_3x,
     get_form_action,
-    get_form_input,
+    get_form_input_value,
     hash_password,
     init_app_with_options,
     is_authenticated,
@@ -228,7 +229,7 @@ def test_authenticate_case_insensitive_email(app, client):
 def test_authenticate_with_invalid_input(client, get_message):
     response = client.post(
         "/login",
-        json=dict(password="password"),
+        json=dict(password="password", email="mememe@test.com"),
         headers={"Content-Type": "application/json"},
     )
     assert get_message("USER_DOES_NOT_EXIST") in response.data
@@ -337,6 +338,7 @@ def test_generic_response(app, client, get_message):
     assert len(flashes) == 0
 
 
+@pytest.mark.parametrize("app", v2_param, indirect=True)
 @pytest.mark.registerable()
 @pytest.mark.settings(username_enable=True, return_generic_responses=True)
 def test_generic_response_username(app, client, get_message):
@@ -344,6 +346,7 @@ def test_generic_response_username(app, client, get_message):
         email="dude@lp.com",
         username="dude",
         password="awesome sunset",
+        password_confirm="awesome sunset",
     )
     response = client.post("/register", json=data)
     assert response.headers["Content-Type"] == "application/json"
@@ -351,7 +354,12 @@ def test_generic_response_username(app, client, get_message):
     logout(client)
 
     response = client.post(
-        "/login", data=dict(username="dude2", password="awesome sunset")
+        "/login",
+        data=dict(
+            username="dude2",
+            password="awesome sunset",
+            password_confirm="awesome sunset",
+        ),
     )
     assert get_message("GENERIC_AUTHN_FAILED") in response.data
 
@@ -899,7 +907,7 @@ def test_http_auth_csrf(client, get_message):
 
     # grab a csrf_token
     response = client.get("/login")
-    csrf_token = get_form_input(response, "csrf_token")
+    csrf_token = get_form_input_value(response, "csrf_token")
     headers["X-CSRF-Token"] = csrf_token
     response = client.post(
         "/http",
@@ -1173,6 +1181,9 @@ def test_change_token_uniquifier(app):
     token = response.json["response"]["user"]["authentication_token"]
     verify_token(client_nc, token)
 
+    with app.app_context():
+        db.engine.dispose()
+
 
 def test_null_token_uniquifier(app):
     pytest.importorskip("sqlalchemy")
@@ -1214,11 +1225,14 @@ def test_null_token_uniquifier(app):
         ds.put(user)
         ds.commit()
 
-        client_nc = app.test_client(use_cookies=False)
+    client_nc = app.test_client(use_cookies=False)
 
-        response = json_authenticate(client_nc)
-        token = response.json["response"]["user"]["authentication_token"]
-        verify_token(client_nc, token)
+    response = json_authenticate(client_nc)
+    token = response.json["response"]["user"]["authentication_token"]
+    verify_token(client_nc, token)
+
+    with app.app_context():
+        db.engine.dispose()
 
 
 def test_token_query(app, client_nc):
@@ -1294,10 +1308,3 @@ def test_auth_token_decorator(app, client_nc):
         headers={"Content-Type": "application/json", "Authentication-Token": token},
     )
     assert response.status_code == 200
-
-
-@pytest.mark.filterwarnings("ignore:.*BACKWARDS_COMPAT_UNAUTHN:DeprecationWarning")
-@pytest.mark.settings(backwards_compat_unauthn=True)
-def test_unauthn_compat(client):
-    response = client.get("/profile")
-    assert response.status_code == 401

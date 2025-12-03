@@ -275,6 +275,18 @@ These configuration keys are used globally across all features.
 
     Default: ``False``.
 
+.. py:data:: SECURITY_SCRIPT_NONCE_KEY
+
+    If set, adds a nonce attribute to all ``<script>`` tags rendered by Flask-Security.
+    The nonce itself needs to be placed in the flask ``g`` context under the key defined here.
+    This is useful when the Content Security Policy requires a nonce on script tags like::
+
+        Content-Security-Policy: script-src 'nonce-{g.your-key}'
+
+    Default: ``None``.
+
+    .. versionadded:: 5.7.0
+
 .. py:data:: SECURITY_EMAIL_SENDER
 
     Specifies the email address to send emails as.
@@ -577,6 +589,15 @@ Core - Passwords and Tokens
 
     .. versionadded:: 5.0.0
 
+.. py:data:: SECURITY_PASSWORD_CONFIRM_REQUIRED
+
+    If set to ``True`` then during registration a 'password confirmation' field is presented.
+    N.B. this just applies to the new(er) RegisterFormV2 (see :py:data:`SECURITY_USE_REGISTER_V2`)
+
+    Default: ``True``
+
+    .. versionadded:: 5.6.0
+
 Core - Multi-factor
 -------------------
 These are used by the Two-Factor and Unified Signin features.
@@ -651,14 +672,6 @@ These are flags that change various backwards compatability functionality.
 
     .. versionadded:: 5.4.0
 
-.. py:data:: SECURITY_BACKWARDS_COMPAT_UNAUTHN
-
-    If set to ``True`` then the default behavior for authentication
-    failures from one of Flask-Security's decorators will be restored to
-    be compatible with releases prior to 3.3.0 (return 401 and some static html).
-
-    Default: ``False``.
-
 .. py:data:: SECURITY_BACKWARDS_COMPAT_AUTH_TOKEN
 
     If set to ``True`` then an Authentication-Token will be returned
@@ -705,7 +718,7 @@ Core - rarely need changing
     Default: ``"remember-salt"``.
 .. py:data:: SECURITY_TWO_FACTOR_VALIDITY_SALT
 
-    Specifies the salt value when generating two factor validity tokens.
+    Specifies the salt value when generating two-factor validity tokens.
 
     Default: ``"tf-validity-salt"``.
 .. py:data:: SECURITY_US_SETUP_SALT
@@ -821,7 +834,7 @@ Login/Logout
 
 .. py:data:: SECURITY_VERIFY_URL
 
-    Specifies the re-authenticate URL. If :py:data:`SECURITY_FRESHNESS` evaluates to < 0; this
+    Specifies the reauthenticate URL. If :py:data:`SECURITY_FRESHNESS` evaluates to < 0; this
     endpoint won't be registered.
 
     Default: ``"/verify"``
@@ -839,9 +852,9 @@ Login/Logout
 
 .. py:data:: SECURITY_POST_VERIFY_URL
 
-    Specifies the default view to redirect to after a user successfully re-authenticates either via
+    Specifies the default view to redirect to after a user successfully reauthenticates either via
     the :py:data:`SECURITY_VERIFY_URL` or the :py:data:`SECURITY_US_VERIFY_URL`.
-    Normally this won't need to be set and after the verification/re-authentication, the referring
+    Normally this won't need to be set and after the verification/reauthentication, the referring
     view (held in the ``next`` parameter) will be redirected to.
 
     Default: ``None``.
@@ -945,6 +958,25 @@ Registerable
 
     .. versionadded:: 4.1.0
 
+.. py:data:: SECURITY_USE_REGISTER_V2
+
+    The :py:class:`flask_security.RegisterFormV2` is a single form used for registration. This is replacing the
+    RegisterForm and ConfirmRegisterForm (over a few releases). Setting this option
+    to ``False`` will revert behavior to prior releases with register_form=RegisterForm and
+    confirm_register_form=ConfirmRegisterForm. Note that this
+    option is ignored if the application has sub-classed the registration form.
+
+    Default: ``True``
+
+    .. versionadded:: 5.6.0
+    .. versionchanged:: 5.7.0
+      Default set to ``True``
+    .. deprecated:: 5.7.0
+      In a future release the old RegisterForm and ConfirmRegisterForm will be removed which
+      will make this option obsolete.
+
+
+
 Confirmable
 -----------
 
@@ -1017,7 +1049,6 @@ Confirmable
 
 Changeable
 ----------
-Configuration variables for the ``SECURITY_CHANGEABLE`` feature:
 
 .. py:data:: SECURITY_CHANGEABLE
 
@@ -1231,7 +1262,7 @@ Configuration related to the two-factor authentication feature.
     Default: ``False``.
 .. py:data:: SECURITY_TWO_FACTOR_REQUIRED
 
-    If set to ``True`` then all users will be required to setup and use two factor authorization.
+    If set to ``True`` then all users will be required to setup and use two-factor authorization.
 
     Default: ``False``.
 .. py:data:: SECURITY_TWO_FACTOR_ENABLED_METHODS
@@ -1239,23 +1270,6 @@ Configuration related to the two-factor authentication feature.
     Specifies the default enabled methods for two-factor authentication.
 
     Default: ``['email', 'authenticator', 'sms']`` which are the only currently supported methods.
-
-.. py:data:: SECURITY_TWO_FACTOR_SECRET
-
-    .. deprecated:: 3.4.0 see: :py:data:`SECURITY_TOTP_SECRETS`
-
-.. py:data:: SECURITY_TWO_FACTOR_URI_SERVICE_NAME
-
-    .. deprecated:: 3.4.0 see: :py:data:`SECURITY_TOTP_ISSUER`
-
-.. py:data:: SECURITY_TWO_FACTOR_SMS_SERVICE
-
-    .. deprecated:: 3.4.0 see: :py:data:`SECURITY_SMS_SERVICE`
-
-.. py:data:: SECURITY_TWO_FACTOR_SMS_SERVICE_CONFIG
-
-    .. deprecated:: 3.4.0 see: :py:data:`SECURITY_SMS_SERVICE_CONFIG`
-
 .. py:data:: SECURITY_TWO_FACTOR_AUTHENTICATOR_VALIDITY
 
     Specifies the number of seconds access token is valid.
@@ -1273,7 +1287,7 @@ Configuration related to the two-factor authentication feature.
     Default: ``120``.
 .. py:data:: SECURITY_TWO_FACTOR_SETUP_WITHIN
 
-    Specifies the amount of time a user has before their two factor setup
+    Specifies the amount of time a user has before their two-factor setup
     token expires. Always pluralize the time unit for this value.
 
     Default: ``"30 minutes"``
@@ -1288,14 +1302,14 @@ Configuration related to the two-factor authentication feature.
 
 .. py:data:: SECURITY_EMAIL_SUBJECT_TWO_FACTOR
 
-    Sets the subject for the two factor feature.
+    Sets the subject for the two-factor feature.
 
-    Default: ``_("Two-factor Login")``
+    Default: ``_("Two-Factor Login")``
 .. py:data:: SECURITY_EMAIL_SUBJECT_TWO_FACTOR_RESCUE
 
-    Sets the subject for the two factor help function.
+    Sets the subject for the two-factor help function.
 
-    Default: ``_("Two-factor Rescue")``
+    Default: ``_("Two-Factor Rescue")``
 .. py:data:: SECURITY_TWO_FACTOR_VERIFY_CODE_TEMPLATE
 
     Specifies the path to the template for the verify code page for the two-factor authentication process.
@@ -1303,30 +1317,30 @@ Configuration related to the two-factor authentication feature.
     Default: ``"security/two_factor_verify_code.html"``.
 .. py:data:: SECURITY_TWO_FACTOR_SETUP_TEMPLATE
 
-    Specifies the path to the template for the setup page for the two factor authentication process.
+    Specifies the path to the template for the setup page for the two-factor authentication process.
 
     Default: ``"security/two_factor_setup.html"``.
 
 .. py:data:: SECURITY_TWO_FACTOR_SETUP_URL
 
-    Specifies the two factor setup URL.
+    Specifies the two-factor setup URL.
 
     Default: ``"/tf-setup"``.
 .. py:data:: SECURITY_TWO_FACTOR_TOKEN_VALIDATION_URL
 
-    Specifies the two factor token validation URL.
+    Specifies the two-factor token validation URL.
 
     Default: ``"/tf-validate"``.
 
 .. py:data:: SECURITY_TWO_FACTOR_RESCUE_URL
 
-    Specifies the two factor rescue URL.
+    Specifies the two-factor rescue URL.
 
     Default: ``"/tf-rescue"``.
 
 .. py:data:: SECURITY_TWO_FACTOR_SELECT_URL
 
-    Specifies the two factor select URL. This is used when the user has
+    Specifies the two-factor select URL. This is used when the user has
     setup more than one second factor.
 
     Default: ``"/tf-select"``.
@@ -1364,7 +1378,7 @@ Configuration related to the two-factor authentication feature.
 
 .. py:data:: SECURITY_TWO_FACTOR_ALWAYS_VALIDATE
 
-    Specifies whether the application should require a two factor code upon every login.
+    Specifies whether the application should require a two-factor code upon every login.
     If set to ``False`` then the 2 values below are used to determine when
     a code is required. Note that this is cookie based - so a new browser
     session will always require a fresh two-factor code.
@@ -1372,14 +1386,14 @@ Configuration related to the two-factor authentication feature.
     Default: ``True``.
 .. py:data:: SECURITY_TWO_FACTOR_LOGIN_VALIDITY
 
-    Specifies the expiration of the two factor validity cookie and verification of the token.
+    Specifies the expiration of the two-factor validity cookie and verification of the token.
 
     Default: ``"30 Days"``.
 
 
 .. py:data:: SECURITY_TWO_FACTOR_VALIDITY_COOKIE
 
-    A dictionary containing the parameters of the two factor validity cookie.
+    A dictionary containing the parameters of the two-factor validity cookie.
     The complete set of parameters is described in Flask's `set_cookie`_ documentation.
 
     Default: ``{'httponly': True, 'secure': False, 'samesite': None}``.
@@ -1448,7 +1462,7 @@ Unified Signin
 
 .. py:data:: SECURITY_US_VERIFY_URL
 
-    This endpoint handles re-authentication, the caller must be already authenticated
+    This endpoint handles reauthentication, the caller must be already authenticated
     and then enter in their primary credentials (password/passcode) again. This is
     used when an endpoint (such as ``/us-setup``) fails freshness checks.
     This endpoint won't be registered if :py:data:`SECURITY_FRESHNESS` evaluates to < 0.
@@ -1545,6 +1559,90 @@ Additional relevant configuration variables:
     * :py:data:`SECURITY_FRESHNESS` - Used to protect /us-setup.
     * :py:data:`SECURITY_FRESHNESS_GRACE_PERIOD` - Used to protect /us-setup.
 
+Username-Recovery
+-----------------
+
+    .. versionadded:: 5.6.0
+
+.. py:data:: SECURITY_USERNAME_RECOVERY
+
+   Specifies whether username recovery is enabled. If set to ``True`` the UserModel
+   must contain a column ``"username"``. Note that this feature is independent
+   of the :py:data:`SECURITY_USERNAME_ENABLE` feature.
+
+   Default: ``False``.
+
+.. py:data:: SECURITY_USERNAME_RECOVERY_URL
+
+   Specifies the username recovery URL.
+
+   Default: ``"/recover-username"``.
+
+.. py:data:: SECURITY_EMAIL_SUBJECT_USERNAME_RECOVERY
+
+   Sets subject for the username recovery email.
+
+   Default: ``_("Your requested username")``.
+
+.. py:data:: SECURITY_USERNAME_RECOVERY_TEMPLATE
+
+   Specifies the path to the template for the username recovery page.
+
+   Default: ``"security/recover_username.html"``.
+
+Change Username
+-----------------
+
+    .. versionadded:: 5.6.0
+
+.. py:data:: SECURITY_CHANGE_USERNAME
+
+   Specifies whether change username feature is enabled.
+   This feature should be used in conjunction with
+   the :py:data:`SECURITY_USERNAME_ENABLE` feature.
+
+   Default: ``False``.
+
+.. py:data:: SECURITY_CHANGE_USERNAME_URL
+
+   Specifies the change username URL.
+
+   Default: ``"/change-username"``.
+
+.. py:data:: SECURITY_POST_CHANGE_USERNAME_VIEW
+
+    Specifies the view to redirect to after a user successfully changes their username.
+    This value can be set to a URL or an endpoint name.
+    If this value is ``None``, the user is redirected  to the
+    value of :data:`SECURITY_POST_LOGIN_VIEW`.
+
+    Default: ``None``.
+
+.. py:data:: SECURITY_SEND_USERNAME_CHANGE_EMAIL
+
+   If ``True`` then an email will be sent to the registered user upon
+   successful change of their username.
+
+   Default: ``True``.
+
+.. py:data:: SECURITY_EMAIL_SUBJECT_USERNAME_CHANGE_NOTICE
+
+   Sets subject for the change username email.
+
+   Default: ``_(""Your username has been changed"")``.
+
+.. py:data:: SECURITY_CHANGE_USERNAME_TEMPLATE
+
+   Specifies the path to the template for the change username page.
+
+   Default: ``"security/change_username.html"``.
+
+Additional relevant configuration variables:
+
+    * :py:data:`SECURITY_FRESHNESS` - Used to protect /change-username.
+    * :py:data:`SECURITY_FRESHNESS_GRACE_PERIOD` - Used to protect /change-username.
+
+
 Passwordless
 -------------
 
@@ -1600,7 +1698,7 @@ Trackable
 
     Specifies if Flask-Security should track basic user login statistics. If set to ``True``, ensure your
     models have the required fields/attributes and make sure to commit changes after calling
-    ``login_user``. Be sure to use `ProxyFix <http://flask.pocoo.org/docs/0.10/deploying/wsgi-standalone/#proxy-setups>`_ if you are using a proxy.
+    ``login_user``. Be sure to use `ProxyFix <https://werkzeug.palletsprojects.com/en/stable/middleware/proxy_fix/>`_ if you are using a proxy.
 
     Default: ``False``
 
@@ -1618,31 +1716,31 @@ WebAuthn
 
 .. py:data:: SECURITY_WAN_REGISTER_URL
 
-    Endpoint for registering WebAuthn credentials.
+    Endpoint for registering WebAuthn credentials/passkeys.
 
     Default: ``"/wan-register"``
 
 .. py:data:: SECURITY_WAN_SIGNIN_URL
 
-    Endpoint for signing in using a WebAuthn credential.
+    Endpoint for signing in using a WebAuthn credential/passkey.
 
     Default: ``"/wan-signin"``
 
 .. py:data:: SECURITY_WAN_DELETE_URL
 
-    Endpoint for removing a WebAuthn credential.
+    Endpoint for removing a WebAuthn credential/passkey.
 
     Default: ``"/wan-delete"``
 
 .. py:data:: SECURITY_WAN_VERIFY_URL
 
-    Endpoint for re-authenticating using a WebAuthn credential.
+    Endpoint for reauthenticating using a WebAuthn credential/passkey.
 
     Default: ``"/wan-verify"``
 
 .. py:data:: SECURITY_WAN_POST_REGISTER_VIEW
 
-    Specifies the view to redirect to after a user successfully registers a new WebAuthn key (non-json).
+    Specifies the view to redirect to after a user successfully registers a new WebAuthn credential/passkey (non-json).
     This value can be set to a URL or an endpoint name.
 
     Default: ``".wan-register"``
@@ -1697,7 +1795,7 @@ WebAuthn
 
 .. py:data:: SECURITY_WAN_ALLOW_AS_FIRST_FACTOR
 
-    If True then a WebAuthn credential/key may be registered for use as the first (or only)
+    If True then a WebAuthn credential/passkey may be registered for use as the first (or only)
     authentication factor. This will set the default ``AuthenticatorSelectionCriteria``
     to require a cross-platform key.
 
@@ -1705,7 +1803,7 @@ WebAuthn
 
 .. py:data:: SECURITY_WAN_ALLOW_AS_MULTI_FACTOR
 
-    If True then a WebAuthn credential/key can be used
+    If True then a WebAuthn credential/passkey can be used
     as both a primary and a secondary factor. This requires that the key
     supports 'UserVerification'.
 
@@ -1714,7 +1812,7 @@ WebAuthn
 .. py:data:: SECURITY_WAN_ALLOW_USER_HINTS
 
     If True then an unauthenticated user can request a list of registered
-    WebAuthn credentials/keys. This allows the use of non-resident (non-discoverable)
+    WebAuthn credentials/passkeys. This allows the use of non-resident (non-discoverable)
     keys, but has the possible security concern that it allows 'user discovery'.
     Look at https://www.w3.org/TR/2021/REC-webauthn-2-20210408/#sctn-username-enumeration
     for a good writeup.
@@ -1730,10 +1828,10 @@ WebAuthn
     Sets which type of WebAuthn security credential, if any, may be used for
     reauthentication/verify events. This is a list with possible values:
 
-        - ``"first"`` - just keys registered as "first" usage are allowed
-        - ``"secondary"`` - just keys registered as "secondary" are allowed
+        - ``"first"`` - just credentials/passkeys registered as "first" usage are allowed
+        - ``"secondary"`` - just credentials/passkeys registered as "secondary" are allowed
 
-    If list is empty or ``None`` WebAuthn keys aren't allowed. This also means that the
+    If list is empty or ``None`` WebAuthn credentials/passkeys aren't allowed. This also means that the
     :py:data:`SECURITY_WAN_VERIFY_URL` endpoint won't be registered.
 
     Default: ``["first", "secondary"]``
@@ -1854,9 +1952,10 @@ Social Oauth
 
 Feature Flags
 -------------
-All feature flags. By default all are 'False'/not enabled.
+All feature flags. By default all are ``False``/not enabled.
 
 * :py:data:`SECURITY_CHANGE_EMAIL`
+* :py:data:`SECURITY_CHANGE_USERNAME`
 * :py:data:`SECURITY_CONFIRMABLE`
 * :py:data:`SECURITY_REGISTERABLE`
 * :py:data:`SECURITY_RECOVERABLE`
@@ -1865,6 +1964,7 @@ All feature flags. By default all are 'False'/not enabled.
 * :py:data:`SECURITY_CHANGEABLE`
 * :py:data:`SECURITY_TWO_FACTOR`
 * :py:data:`SECURITY_UNIFIED_SIGNIN`
+* :py:data:`SECURITY_USERNAME_RECOVERY`
 * :py:data:`SECURITY_WEBAUTHN`
 * :py:data:`SECURITY_MULTI_FACTOR_RECOVERY_CODES`
 * :py:data:`SECURITY_OAUTH_ENABLE`
@@ -1873,23 +1973,24 @@ URLs and Views
 --------------
 A list of all URLs and Views:
 
-* :py:data:`SECURITY_LOGIN_URL`
-* :py:data:`SECURITY_LOGOUT_URL`
-* :py:data:`SECURITY_VERIFY_URL`
-* :py:data:`SECURITY_REGISTER_URL`
-* :py:data:`SECURITY_CHANGE_EMAIL_URL`
-* :py:data:`SECURITY_CHANGE_EMAIL_CONFIRM_URL`
-* :py:data:`SECURITY_RESET_URL`
-* :py:data:`SECURITY_CHANGE_URL`
-* :py:data:`SECURITY_CONFIRM_URL`
-* :py:data:`SECURITY_MULTI_FACTOR_RECOVERY_CODES_URL`
-* :py:data:`SECURITY_MULTI_FACTOR_RECOVERY_URL`
-* :py:data:`SECURITY_OAUTH_START_URL`
-* :py:data:`SECURITY_OAUTH_RESPONSE_URL`
-* :py:data:`SECURITY_TWO_FACTOR_SELECT_URL`
-* :py:data:`SECURITY_TWO_FACTOR_SETUP_URL`
-* :py:data:`SECURITY_TWO_FACTOR_TOKEN_VALIDATION_URL`
-* :py:data:`SECURITY_TWO_FACTOR_RESCUE_URL`
+* :py:data:`SECURITY_LOGIN_URL` ``"/login"``
+* :py:data:`SECURITY_LOGOUT_URL` ``"/logout"``
+* :py:data:`SECURITY_VERIFY_URL` ``"/verify"``
+* :py:data:`SECURITY_REGISTER_URL` ``"/register"``
+* :py:data:`SECURITY_CHANGE_EMAIL_URL` ``"change-email"``
+* :py:data:`SECURITY_CHANGE_EMAIL_CONFIRM_URL` ``"/change-email-confirm"``
+* :py:data:`SECURITY_CHANGE_USERNAME_URL` ``"change-username"``
+* :py:data:`SECURITY_RESET_URL` ``"/reset"``
+* :py:data:`SECURITY_CHANGE_URL` ``"/change"``
+* :py:data:`SECURITY_CONFIRM_URL` ``"/confirm"``
+* :py:data:`SECURITY_MULTI_FACTOR_RECOVERY_CODES_URL` ``"/mf-recovery-codes"``
+* :py:data:`SECURITY_MULTI_FACTOR_RECOVERY_URL` ``"/mf-recovery"``
+* :py:data:`SECURITY_OAUTH_START_URL` ``"/login/oauthstart"``
+* :py:data:`SECURITY_OAUTH_RESPONSE_URL` ``"/login/oauthresponse"``
+* :py:data:`SECURITY_TWO_FACTOR_SELECT_URL` ``"/tf-select"``
+* :py:data:`SECURITY_TWO_FACTOR_SETUP_URL` ``"/tf-setup"``
+* :py:data:`SECURITY_TWO_FACTOR_TOKEN_VALIDATION_URL` ``"/tf-validate"``
+* :py:data:`SECURITY_TWO_FACTOR_RESCUE_URL` ``"/tf-rescue"``
 * :py:data:`SECURITY_TWO_FACTOR_ERROR_VIEW`
 * :py:data:`SECURITY_TWO_FACTOR_POST_SETUP_VIEW`
 * :py:data:`SECURITY_POST_LOGIN_VIEW`
@@ -1904,6 +2005,7 @@ A list of all URLs and Views:
 * :py:data:`SECURITY_RESET_VIEW`
 * :py:data:`SECURITY_RESET_ERROR_VIEW`
 * :py:data:`SECURITY_LOGIN_ERROR_VIEW`
+* :py:data:`SECURITY_USERNAME_RECOVERY_URL`
 * :py:data:`SECURITY_US_SIGNIN_URL`
 * :py:data:`SECURITY_US_SETUP_URL`
 * :py:data:`SECURITY_US_SIGNIN_SEND_CODE_URL`
@@ -1928,6 +2030,7 @@ A list of all templates:
 * :py:data:`SECURITY_RESET_PASSWORD_TEMPLATE`
 * :py:data:`SECURITY_CHANGE_PASSWORD_TEMPLATE`
 * :py:data:`SECURITY_CHANGE_EMAIL_TEMPLATE`
+* :py:data:`SECURITY_CHANGE_USERNAME_TEMPLATE`
 * :py:data:`SECURITY_MULTI_FACTOR_RECOVERY_TEMPLATE`
 * :py:data:`SECURITY_MULTI_FACTOR_RECOVERY_CODES_TEMPLATE`
 * :py:data:`SECURITY_SEND_CONFIRMATION_TEMPLATE`
@@ -1935,6 +2038,7 @@ A list of all templates:
 * :py:data:`SECURITY_TWO_FACTOR_VERIFY_CODE_TEMPLATE`
 * :py:data:`SECURITY_TWO_FACTOR_SELECT_TEMPLATE`
 * :py:data:`SECURITY_TWO_FACTOR_SETUP_TEMPLATE`
+* :py:data:`SECURITY_USERNAME_RECOVERY_TEMPLATE`
 * :py:data:`SECURITY_US_SIGNIN_TEMPLATE`
 * :py:data:`SECURITY_US_SETUP_TEMPLATE`
 * :py:data:`SECURITY_US_VERIFY_TEMPLATE`
@@ -2020,11 +2124,13 @@ The default messages and error levels can be found in ``core.py``.
 * ``SECURITY_MSG_US_SPECIFY_IDENTITY``
 * ``SECURITY_MSG_USE_CODE``
 * ``SECURITY_MSG_USER_DOES_NOT_EXIST``
+* ``SECURITY_MSG_USERNAME_CHANGE``
 * ``SECURITY_MSG_USERNAME_INVALID_LENGTH``
 * ``SECURITY_MSG_USERNAME_ILLEGAL_CHARACTERS``
 * ``SECURITY_MSG_USERNAME_DISALLOWED_CHARACTERS``
 * ``SECURITY_MSG_USERNAME_NOT_PROVIDED``
 * ``SECURITY_MSG_USERNAME_ALREADY_ASSOCIATED``
+* ``SECURITY_MSG_USERNAME_RECOVERY_REQUEST``
 * ``SECURITY_MSG_WEBAUTHN_EXPIRED``
 * ``SECURITY_MSG_WEBAUTHN_NAME_REQUIRED``
 * ``SECURITY_MSG_WEBAUTHN_NAME_INUSE``

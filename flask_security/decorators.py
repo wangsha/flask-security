@@ -1,12 +1,12 @@
 """
-    flask_security.decorators
-    ~~~~~~~~~~~~~~~~~~~~~~~~~
+flask_security.decorators
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    Flask-Security decorators module
+Flask-Security decorators module
 
-    :copyright: (c) 2012-2019 by Matt Wright.
-    :copyright: (c) 2019-2024 by J. Christopher Wagner (jwag).
-    :license: MIT, see LICENSE for more details.
+:copyright: (c) 2012-2019 by Matt Wright.
+:copyright: (c) 2019-2024 by J. Christopher Wagner (jwag).
+:license: MIT, see LICENSE for more details.
 """
 
 from __future__ import annotations
@@ -48,22 +48,6 @@ _csrf = LocalProxy(lambda: current_app.extensions["csrf"])
 
 BasicAuth = namedtuple("BasicAuth", "username, password")
 
-# NOTE: this is here for backwards compatibility, it is deprecated and
-# could be removed any time!
-_default_unauthenticated_html = """
-    <h1>Unauthorized</h1>
-    <p>The server could not verify that you are authorized to access the URL
-    requested. You either supplied the wrong credentials (e.g. a bad password),
-    or your browser doesn't understand how to supply the credentials required.
-    </p>
-    """
-
-
-def _get_unauthenticated_response(text=None, headers=None):
-    text = text or _default_unauthenticated_html
-    headers = headers or {}
-    return Response(text, 401, headers)
-
 
 def default_unauthn_handler(mechanisms=None, headers=None):
     """Default callback for failures to authenticate
@@ -79,8 +63,6 @@ def default_unauthn_handler(mechanisms=None, headers=None):
     headers = headers or {}
     m, c = get_message("UNAUTHENTICATED")
 
-    if cv("BACKWARDS_COMPAT_UNAUTHN"):
-        return _get_unauthenticated_response(headers=headers)
     if _security._want_json(request):
         payload = json_error_response(errors=m)
         return _security._render_json(payload, 401, headers, None)
@@ -449,10 +431,12 @@ def unauth_csrf(
 
     This decorator does nothing if *WTF_CSRF_ENABLED* == **False**.
 
-    This decorator does nothing if the caller is authenticated.
-
     This decorator will suppress CSRF if caller isn't authenticated and has set the
     :py:data:`SECURITY_CSRF_IGNORE_UNAUTH_ENDPOINTS` config variable to **True**.
+
+    If the caller IS authenticated, it will perform normal CSRF checks. This makes
+    this decorator useful for the views that can be called EITHER when authenticated
+    or anonymously.
 
     .. versionadded:: 3.3.0
 
